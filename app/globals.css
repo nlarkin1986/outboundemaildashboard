@@ -1,0 +1,149 @@
+:root{
+  --gladly-green:#009b00;
+  --gladly-green-hover:#008000;
+  --gladly-park:#64B964;
+  --gladly-park-light:#D8F4D8;
+  --gladly-wood:#006400;
+  --gladly-midday:#ffe01e;
+  --gladly-drive:#f54545;
+  --gladly-pond:#4682b4;
+  --gladly-black:#000000;
+  --gladly-gray-700:#374151;
+  --gladly-gray-500:#6b7280;
+  --gladly-gray-300:#d1d5db;
+  --gladly-gray-200:#e5e7eb;
+  --gladly-gray-100:#FAFAFA;
+  --gladly-white:#FFFFFF;
+  --radius-sm:.25rem;
+  --radius-md:.375rem;
+  --radius-lg:.5rem;
+  --radius-full:9999px;
+}
+*{box-sizing:border-box}
+html{background:var(--gladly-gray-100)}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--gladly-gray-100);color:var(--gladly-black)}
+button,input,textarea,select{font:inherit}
+button{cursor:pointer}
+a{color:inherit;text-decoration:none}
+.container{max-width:1180px;margin:0 auto;padding:32px 40px}
+.card{background:var(--gladly-white);border:1px solid var(--gladly-gray-200);border-radius:var(--radius-lg);padding:24px}
+.card a{color:var(--gladly-green);font-weight:500}
+
+.reviewShell{min-height:100vh;background:var(--gladly-gray-100);color:var(--gladly-black);padding-top:56px;padding-left:224px}
+.emptyReview{padding:80px 40px}
+.reviewTopbar{position:fixed;top:0;left:0;right:0;height:56px;background:var(--gladly-white);border-bottom:1px solid var(--gladly-gray-200);display:flex;align-items:center;justify-content:space-between;padding:0 16px;z-index:40}
+.backLink{display:flex;align-items:center;gap:4px;color:var(--gladly-gray-700);font-size:14px;font-weight:500}
+.backLink span:first-child{font-size:22px;line-height:1;color:var(--gladly-gray-500)}
+.backLink:hover{color:var(--gladly-black)}
+.gladlyLogo{position:absolute;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:4px;font-size:20px;font-weight:600;color:#111827}
+.gladlyLogo svg{width:22px;height:22px;display:block}
+.topbarRight{display:flex;align-items:center;gap:12px}
+.avatar{width:32px;height:32px;border-radius:var(--radius-full);background:var(--gladly-green);color:var(--gladly-white);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:500}
+.reviewSidebar{position:fixed;top:56px;left:0;bottom:0;width:224px;background:var(--gladly-white);border-right:1px solid var(--gladly-gray-200);padding:24px 16px;overflow-y:auto;z-index:30}
+.reviewSidebar h2{font-size:16px;font-weight:600;color:#111827;margin:0 8px 20px}
+.sidebarSectionLabel{font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.04em;color:var(--gladly-gray-500);padding:6px 8px;margin-bottom:4px}
+.sidebarNav{display:grid;gap:2px}
+.sidebarNav a{display:block;padding:7px 16px;border-radius:0 var(--radius-md) var(--radius-md) 0;color:var(--gladly-gray-700);font-size:14px}
+.sidebarNav a:hover{background:var(--gladly-gray-100);color:var(--gladly-black)}
+.sidebarNav a.active{background:var(--gladly-gray-100);color:var(--gladly-black);border-left:4px solid var(--gladly-green);margin-left:-4px;padding-left:16px;font-weight:500}
+.sidebarNote{margin-top:24px;border:1px solid var(--gladly-gray-200);border-radius:var(--radius-lg);padding:14px;background:var(--gladly-gray-100);display:grid;gap:6px}
+.sidebarNote strong{font-size:13px;color:#111827;font-weight:600}
+.sidebarNote span{font-size:12px;line-height:1.45;color:var(--gladly-gray-500)}
+.reviewMain{background:var(--gladly-white);min-height:calc(100vh - 56px);padding:32px 40px}
+.pageHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:24px}
+.pageHeader h1{font-size:24px;line-height:1.2;margin:10px 0 6px;font-weight:700;color:#111827}
+.pageHeader p{font-size:14px;line-height:1.5;color:var(--gladly-gray-500);margin:0;max-width:720px}
+.pageActions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+.buttonPrimary,.buttonSecondary{border-radius:var(--radius-md);padding:8px 16px;font-size:14px;font-weight:500;transition:background .15s ease,color .15s ease,border-color .15s ease,box-shadow .15s ease;min-height:38px}
+.buttonPrimary{border:1px solid var(--gladly-green);background:var(--gladly-green);color:var(--gladly-white)}
+.buttonPrimary:hover{background:var(--gladly-green-hover);border-color:var(--gladly-green-hover)}
+.buttonSecondary{border:1px solid var(--gladly-gray-300);background:var(--gladly-white);color:var(--gladly-gray-700)}
+.buttonSecondary:hover{background:var(--gladly-gray-100);color:#111827}
+.buttonPrimary:focus,.buttonSecondary:focus,.filterTabs button:focus,.statusButtons button:focus,.contactItem:focus,input:focus,textarea:focus{outline:none;box-shadow:0 0 0 2px var(--gladly-green);border-color:transparent}
+.badge{display:inline-flex;align-items:center;border-radius:var(--radius-sm);padding:2px 8px;font-size:12px;font-weight:500;line-height:1.5}
+.activeBadge{background:var(--gladly-park-light);color:var(--gladly-green);border:1px solid var(--gladly-green)}
+.neutralBadge{background:var(--gladly-gray-100);color:var(--gladly-gray-700);border:1px solid var(--gladly-gray-200)}
+.warningBadge{background:#fff7ed;color:#b45309;border:1px solid #fed7aa}
+.safeBadge{display:inline-flex;align-items:center;border-radius:var(--radius-sm);padding:2px 8px;font-size:12px;font-weight:500;line-height:1.5;background:var(--gladly-gray-100);color:var(--gladly-gray-700);border:1px solid var(--gladly-gray-200)}
+.metricGrid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin-bottom:24px}
+.metricCard{background:var(--gladly-white);border:1px solid var(--gladly-gray-200);border-radius:var(--radius-lg);padding:16px}
+.metricCard span{display:block;color:var(--gladly-gray-500);font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px}
+.metricCard strong{display:block;color:#111827;font-size:28px;line-height:1;font-weight:700}
+.reviewWorkspace{display:grid;grid-template-columns:320px minmax(0,1fr);gap:24px;align-items:start}
+.reviewCard{background:var(--gladly-white);border:1px solid var(--gladly-gray-200);border-radius:var(--radius-lg);padding:16px}
+.contactPanel{position:sticky;top:80px;display:flex;flex-direction:column;gap:14px;max-height:calc(100vh - 112px)}
+.panelHeader,.panelTitleRow,.emailHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.panelHeader h3,.panelTitleRow h3,.emailHeader h3{font-size:18px;font-weight:600;color:#111827;margin:0}
+.panelHeader p{font-size:13px;color:var(--gladly-gray-500);margin:2px 0 0}
+.searchField{position:relative}
+.searchField span{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:var(--gladly-gray-500);font-size:16px;pointer-events:none}
+.searchField input{width:100%;height:40px;border:1px solid var(--gladly-gray-300);border-radius:var(--radius-full);padding:8px 14px 8px 38px;font-size:14px;color:#111827;background:var(--gladly-white)}
+.searchField input::placeholder,input::placeholder,textarea::placeholder{color:#9ca3af}
+.filterTabs{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;border-bottom:1px solid var(--gladly-gray-200);padding-bottom:12px}
+.filterTabs button{border:0;border-bottom:2px solid transparent;background:transparent;color:var(--gladly-gray-500);font-size:13px;font-weight:500;padding:7px 2px;text-transform:capitalize}
+.filterTabs button:hover{color:var(--gladly-gray-700)}
+.filterTabs button.active{color:var(--gladly-green);border-bottom-color:var(--gladly-green)}
+.contactList{display:grid;gap:8px;overflow:auto;padding-right:2px}
+.contactItem{width:100%;text-align:left;border:1px solid var(--gladly-gray-200);background:var(--gladly-white);border-radius:var(--radius-md);padding:12px;display:grid;grid-template-columns:36px minmax(0,1fr) 10px;align-items:center;gap:10px;color:#111827;transition:background .15s ease,border-color .15s ease}
+.contactItem:hover{background:var(--gladly-gray-100)}
+.contactItem.selected{background:var(--gladly-gray-100);border-left:4px solid var(--gladly-green);padding-left:9px;border-color:var(--gladly-gray-200)}
+.contactAvatar,.largeAvatar{border-radius:var(--radius-full);background:var(--gladly-green);color:var(--gladly-white);display:flex;align-items:center;justify-content:center;font-weight:500}
+.contactAvatar{width:36px;height:36px;font-size:12px}
+.largeAvatar{width:48px;height:48px;font-size:14px;flex:0 0 auto}
+.contactCopy{min-width:0;display:grid;gap:2px}
+.contactCopy strong{font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.contactCopy small{font-size:12px;color:var(--gladly-gray-500);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:capitalize}
+.statusDot{width:8px;height:8px;border-radius:var(--radius-full);background:var(--gladly-gray-300)}
+.statusDot.approved{background:var(--gladly-green)}
+.statusDot.needsEdit{background:var(--gladly-midday)}
+.statusDot.skipped{background:var(--gladly-gray-500)}
+.detailPanel{display:grid;gap:16px;min-width:0}
+.selectedHeader{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:20px}
+.selectedIdentity{display:flex;align-items:center;gap:14px;min-width:0}
+.sectionEyebrow{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:var(--gladly-gray-500);font-weight:500;margin-bottom:4px}
+.selectedHeader h2{font-size:20px;font-weight:600;margin:0;color:#111827}
+.selectedHeader p{font-size:14px;color:var(--gladly-gray-500);margin:4px 0 0}
+.statusButtons{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.statusButtons button{border:1px solid var(--gladly-gray-300);border-radius:var(--radius-md);background:var(--gladly-white);color:var(--gladly-gray-700);font-size:14px;font-weight:500;padding:8px 12px;text-transform:none;transition:background .15s ease,color .15s ease,border-color .15s ease}
+.statusButtons button:hover{background:var(--gladly-gray-100);color:#111827}
+.statusButtons button.active.approved{background:var(--gladly-green);border-color:var(--gladly-green);color:var(--gladly-white)}
+.statusButtons button.active.needsEdit{background:var(--gladly-park-light);border-color:var(--gladly-green);color:var(--gladly-green)}
+.statusButtons button.active.skipped{background:var(--gladly-gray-700);border-color:var(--gladly-gray-700);color:var(--gladly-white)}
+.evidenceCard{padding:20px}
+.fieldGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:18px}
+label{display:grid;gap:6px;font-size:14px;font-weight:500;color:var(--gladly-gray-700)}
+input,textarea{width:100%;border:1px solid var(--gladly-gray-300);border-radius:var(--radius-md);background:var(--gladly-white);color:#111827;padding:8px 12px;font-size:14px;line-height:1.5}
+textarea{resize:vertical;min-height:96px}
+.okCallout,.warningCallout{margin-top:16px;border-radius:var(--radius-md);padding:12px 14px;font-size:14px;line-height:1.45}
+.okCallout{background:var(--gladly-park-light);border:1px solid var(--gladly-park-light);color:var(--gladly-wood)}
+.warningCallout{background:#fff7ed;border:1px solid #fed7aa;color:#9a3412}
+.emailStack{display:grid;gap:16px}
+.emailCard{padding:20px}
+.emailHeader{padding-bottom:14px;border-bottom:1px solid var(--gladly-gray-200);margin-bottom:16px}
+.emailHeader h3{font-size:16px;line-height:1.35;max-width:760px}
+.emailGrid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(300px,.95fr);gap:18px;align-items:start}
+.emailEditor{display:grid;gap:14px}
+.emailEditor textarea{min-height:210px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:13px;line-height:1.55}
+.previewPane{background:var(--gladly-gray-100);border:1px solid var(--gladly-gray-200);border-radius:var(--radius-lg);padding:18px;min-height:220px}
+.previewPane h4{font-size:18px;font-weight:600;line-height:1.35;color:#111827;margin:0 0 12px}
+.previewPane p{font-size:14px;line-height:1.65;color:var(--gladly-gray-700);margin:0;white-space:pre-wrap}
+
+@media (max-width:1100px){
+  .reviewShell{padding-left:0}
+  .reviewSidebar{display:none}
+  .reviewMain{padding:24px}
+  .reviewWorkspace{grid-template-columns:1fr}
+  .contactPanel{position:static;max-height:none}
+  .emailGrid,.fieldGrid{grid-template-columns:1fr}
+  .pageHeader,.selectedHeader{flex-direction:column;align-items:stretch}
+  .pageActions,.statusButtons{justify-content:flex-start}
+}
+@media (max-width:720px){
+  .gladlyLogo{position:static;transform:none}
+  .safeBadge{display:none}
+  .reviewTopbar{gap:12px}
+  .reviewMain{padding:18px}
+  .metricGrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .pageActions{display:grid;grid-template-columns:1fr 1fr;width:100%}
+  .buttonPrimary,.buttonSecondary{width:100%}
+}

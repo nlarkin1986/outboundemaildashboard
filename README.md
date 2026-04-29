@@ -1,0 +1,155 @@
+# Outbound Approval Vercel App
+
+Production-oriented MVP for the Cowork → Vercel → review approval → server-side Instantly push workflow.
+
+## What is implemented
+
+- Next.js App Router app on Vercel-compatible structure.
+- Run creation API: `POST /api/runs`.
+- Durable Postgres-backed store when `DATABASE_URL` is configured.
+- Local in-memory fallback when `DATABASE_URL` is not configured, for fast development/tests only. Vercel refuses to use the fallback and requires `DATABASE_URL`.
+- Review page: `/review/:token` with Gladly-style UI.
+- Save endpoint: `POST /api/review/:token/save`.
+- Submit endpoint: `POST /api/review/:token/submit`.
+- Internal push endpoint: `POST /api/internal/push/:runId`.
+- Instantly client seam that keeps API keys server-side.
+- AI SDK/Claude generation seam and structured output schema.
+- Exa and Browserbase server-side research seams.
+- Cowork webhook placeholder.
+- Vercel config with function duration hints.
+- Tests for run validation, review persistence, and idempotent push behavior.
+
+## Important security posture
+
+- Browser UI never calls Instantly.
+- Browser UI does not receive Exa, Browserbase, Anthropic, or Instantly keys.
+- The internal push endpoint fails closed unless `INTERNAL_API_SECRET` is configured.
+- Only approved contacts are eligible for push.
+- Push requires the review to be submitted first.
+- Push worker is idempotent by `run_id + contact_id`.
+- Campaign paused-state is enforced by the server-side push result contract.
+- Review tokens are stored as SHA-256 hashes in Postgres, not raw tokens.
+
+## Local dev without Postgres
+
+This uses the in-memory fallback. Data resets when the process restarts.
+
+```bash
+npm install
+npm run dev
+```
+
+Create a sample run:
+
+```bash
+curl -X POST http://localhost:3000/api/runs \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "company_name":"The Black Tux",
+    "domain":"theblacktux.com",
+    "mode":"fast",
+    "source":"api",
+    "campaign_id":"camp_test",
+    "contacts":[{"first_name":"Alex","last_name":"Morgan","title":"VP CX","company":"The Black Tux","email":"alex@example.com","domain":"theblacktux.com"}]
+  }'
+```
+
+Open the returned `review_url`, approve the contact, save, and submit.
+
+## Local dev with Postgres
+
+1. Copy env template:
+
+```bash
+cp .env.example .env.local
+```
+
+2. Set at minimum:
+
+```bash
+DATABASE_URL=postgres://user:password@host:5432/outbound
+DATABASE_SSL=false # only for local non-SSL Postgres
+INTERNAL_API_SECRET=replace-with-random-secret
+APP_BASE_URL=http://localhost:3000
+```
+
+3. Apply schema:
+
+```bash
+npm run db:setup
+npm run db:smoke
+```
+
+4. Start app:
+
+```bash
+npm run dev
+```
+
+When `DATABASE_URL` is present, `lib/store.ts` automatically routes all run/review/push state to Postgres.
+
+## Vercel setup
+
+Recommended Vercel project settings:
+
+- Framework: Next.js
+- Build command: `npm run build`
+- Install command: `npm install`
+- Output: Next.js default
+
+Required Vercel environment variables:
+
+```text
+APP_BASE_URL=https://your-vercel-domain.vercel.app
+DATABASE_URL=postgres://...
+DATABASE_SSL=true
+DATABASE_POOL_MAX=5
+INTERNAL_API_SECRET=...
+ANTHROPIC_API_KEY=...
+EXA_API_KEY=...
+BROWSERBASE_API_KEY=...
+BROWSERBASE_PROJECT_ID=...
+INSTANTLY_API_KEY=...
+COWORK_API_KEY=...
+COWORK_WEBHOOK_SECRET=...
+REVIEW_SIGNING_SECRET=...
+```
+
+After setting `DATABASE_URL`, run the schema once against production:
+
+```bash
+npm run db:setup
+```
+
+If using Vercel Postgres/Neon/Supabase, run that command from a machine with the same `DATABASE_URL`, or from Vercel's environment through your deployment workflow.
+
+## Push endpoint
+
+The push endpoint is internal only:
+
+```bash
+curl -X POST "$APP_BASE_URL/api/internal/push/$RUN_ID" \
+  -H "Authorization: Bearer $INTERNAL_API_SECRET"
+```
+
+It will return `503` if `INTERNAL_API_SECRET` is not configured and `401` if the header is missing/wrong.
+
+## Validation
+
+```bash
+npm test
+npm run typecheck
+npm run build
+```
+
+## Remaining production work
+
+This repo is now wired for Vercel and Postgres, but these still need real account/environment configuration before live rollout:
+
+1. Create/provision the actual Postgres database and set `DATABASE_URL` in Vercel.
+2. Run `npm run db:setup` against that database.
+3. Confirm the exact Instantly endpoint/payload mapping for the target workspace.
+4. Confirm Cowork kickoff/timeline API integration.
+5. Replace synchronous generation in `POST /api/runs` with Vercel Workflows/Queues or Trigger.dev for larger batches.
+6. Add SSO/auth around `/admin/runs` and potentially review pages.
+7. Add Sentry/observability and batch pagination.

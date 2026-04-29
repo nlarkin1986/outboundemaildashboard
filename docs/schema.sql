@@ -1,0 +1,99 @@
+-- Production Postgres schema for the Cowork -> Vercel -> Instantly approval workflow.
+-- Safe to run repeatedly in a fresh or existing database.
+
+create table if not exists runs (
+  id text primary key,
+  company_name text not null,
+  domain text,
+  status text not null check (status in ('queued','researching','writing','ready_for_review','review_submitted','pushing','pushed','partially_failed','failed')),
+  mode text not null default 'fast' check (mode in ('fast','deep')),
+  source text not null check (source in ('cowork','manual','api')),
+  created_by text,
+  cowork_thread_id text,
+  cowork_callback_url text,
+  review_token_hash text unique,
+  campaign_id text,
+  error_message text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists contacts (
+  id text primary key,
+  run_id text not null references runs(id) on delete cascade,
+  first_name text,
+  last_name text,
+  title text,
+  company text,
+  email text not null,
+  domain text,
+  status text not null default 'needs_edit' check (status in ('needs_edit','approved','skipped')),
+  primary_angle text,
+  opening_hook text,
+  proof_used text,
+  guardrail text,
+  evidence_json jsonb not null default '[]',
+  qa_warnings_json jsonb not null default '[]',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(run_id, email)
+);
+
+create table if not exists sequence_emails (
+  id text primary key,
+  contact_id text not null references contacts(id) on delete cascade,
+  step_number int not null check (step_number in (1,2,3)),
+  subject text not null,
+  body_html text not null,
+  body_text text,
+  original_subject text,
+  original_body_html text,
+  edited_by text,
+  edited_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(contact_id, step_number)
+);
+
+create table if not exists review_events (
+  id text primary key,
+  run_id text not null references runs(id) on delete cascade,
+  contact_id text references contacts(id) on delete set null,
+  actor text,
+  event_type text not null,
+  before_json jsonb,
+  after_json jsonb,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists push_jobs (
+  id text primary key,
+  run_id text not null references runs(id) on delete cascade,
+  status text not null check (status in ('queued','running','completed','failed')),
+  instantly_campaign_id text,
+  idempotency_key text not null unique,
+  attempts int not null default 0,
+  result_json jsonb,
+  error_message text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists pushed_contacts (
+  id text primary key,
+  run_id text not null references runs(id) on delete cascade,
+  contact_id text not null references contacts(id) on delete cascade,
+  instantly_lead_id text,
+  instantly_campaign_id text,
+  status text not null check (status in ('running','completed','failed')),
+  response_json jsonb,
+  error_message text,
+  created_at timestamptz not null default now(),
+  unique(run_id, contact_id)
+);
+
+create index if not exists idx_contacts_run_id on contacts(run_id);
+create index if not exists idx_sequence_emails_contact_id on sequence_emails(contact_id);
+create index if not exists idx_review_events_run_id on review_events(run_id);
+create index if not exists idx_push_jobs_run_id on push_jobs(run_id);
+create index if not exists idx_pushed_contacts_run_id on pushed_contacts(run_id);
