@@ -1,15 +1,8 @@
 import type { BatchStatus } from '@/lib/types';
-import { createBatch, getBatchById, listBatchRuns, reviewUrlForBatchToken, upsertUserFromCoworkActor } from '@/lib/store';
-import { processBatch } from '@/lib/jobs/processBatch';
+import { createBatch, getBatchById, listBatchRuns, reviewUrlForBatchToken, updateBatchStatus, upsertUserFromCoworkActor } from '@/lib/store';
+import { dashboardStatusUrl, pollingMetadata } from '@/lib/cowork/continuation';
+import { triggerBatchProcessing } from '@/lib/jobs/triggerBatchProcessing';
 import { createOutboundSequenceSchema, getOutboundSequenceStatusSchema, type CreateOutboundSequenceInput, type GetOutboundSequenceStatusInput } from './schemas';
-
-function appBaseUrl() {
-  return process.env.APP_BASE_URL ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
-}
-
-function dashboardStatusUrl(batchId: string) {
-  return `${appBaseUrl()}/admin/runs?batch_id=${encodeURIComponent(batchId)}`;
-}
 
 export async function createOutboundSequence(input: CreateOutboundSequenceInput) {
   const parsed = createOutboundSequenceSchema.safeParse(input);
@@ -29,12 +22,11 @@ export async function createOutboundSequence(input: CreateOutboundSequenceInput)
 
   let status: BatchStatus = batch.status;
   const warnings: string[] = [];
-  try {
-    const processed = await processBatch(batch.id);
-    status = processed.status as BatchStatus;
-  } catch (error) {
-    status = 'failed';
-    warnings.push(`Processing did not complete: ${error instanceof Error ? error.message : String(error)}`);
+  const trigger = await triggerBatchProcessing(batch.id);
+  if (trigger.warning) warnings.push(trigger.warning);
+  if (trigger.started && status === 'queued') {
+    status = 'processing';
+    await updateBatchStatus(batch.id, status);
   }
 
   return {
@@ -43,6 +35,11 @@ export async function createOutboundSequence(input: CreateOutboundSequenceInput)
     status,
     review_url: reviewUrlForBatchToken(batch.review_token),
     dashboard_status_url: dashboardStatusUrl(batch.id),
+    ...pollingMetadata(status),
+    processing: {
+      started: trigger.started,
+      mode: trigger.mode,
+    },
     created_by: owner.user.email,
     account_domain: owner.account.domain,
     warnings,
@@ -63,6 +60,7 @@ export async function getOutboundSequenceStatus(input: GetOutboundSequenceStatus
     status: batch.status,
     review_url: batch.review_url ?? reviewUrlForBatchToken(batch.review_token),
     dashboard_status_url: dashboardStatusUrl(batch.id),
+    ...pollingMetadata(batch.status),
     created_by: batch.requested_by,
     account_domain: owner.account.domain,
     run_counts: {
