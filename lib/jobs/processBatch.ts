@@ -28,10 +28,23 @@ export async function processBatch(batchId: string) {
     let runId = '';
     try {
       const hasContacts = (company.contacts?.length ?? 0) > 0;
+      const agentOutput = await runCompanyAgent({ company, targetPersona: undefined });
+      const runContacts = hasContacts
+        ? company.contacts!
+        : agentOutput.contacts.length
+          ? agentOutput.contacts.map((contact) => ({
+            first_name: contact.first_name,
+            last_name: contact.last_name,
+            title: contact.title,
+            company: contact.company,
+            email: contact.email,
+            domain: company.domain,
+          }))
+          : [placeholderContact(company)];
       const run = await createRun({
         company_name: company.company_name,
         domain: company.domain,
-        contacts: hasContacts ? company.contacts! : [placeholderContact(company)],
+        contacts: runContacts,
         campaign_id: batch.campaign_id,
         cowork_thread_id: batch.cowork_thread_id,
         mode: batch.mode,
@@ -42,7 +55,6 @@ export async function processBatch(batchId: string) {
       });
       runId = run.id;
       await attachRunToBatch(batchId, run.id, company, 'researching');
-      const agentOutput = await runCompanyAgent({ company, targetPersona: undefined });
       await saveResearchArtifact(run.id, { company_name: company.company_name, domain: company.domain, core_hypothesis: agentOutput.core_hypothesis, evidence_ledger: agentOutput.evidence_ledger, source_urls: agentOutput.evidence_ledger.map((e) => e.source_url).filter(Boolean) as string[], raw_summary: agentOutput });
       await updateBatchRunStatus(batchId, run.id, 'writing');
       const state = await import('@/lib/store').then((store) => store.generateDraftForRun(run.id));
