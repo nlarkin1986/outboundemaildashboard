@@ -35,6 +35,8 @@ const optional = [
   'DATABASE_POOL_MAX',
   'INSTANTLY_WORKSPACE_ID',
   'COWORK_API_KEY',
+  'MCP_API_SECRET',
+  'MCP_AUTH_DISABLED',
 ];
 
 function parseDotenv(text) {

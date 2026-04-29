@@ -115,6 +115,9 @@ create table if not exists pushed_contacts (
   unique(run_id, contact_id)
 );
 
+alter table runs add column if not exists account_id text references accounts(id);
+alter table runs add column if not exists created_by_user_id text references users(id);
+
 create index if not exists idx_contacts_run_id on contacts(run_id);
 create index if not exists idx_users_email on users(email);
 create index if not exists idx_users_account_id on users(account_id);
@@ -124,10 +127,6 @@ create index if not exists idx_sequence_emails_contact_id on sequence_emails(con
 create index if not exists idx_review_events_run_id on review_events(run_id);
 create index if not exists idx_push_jobs_run_id on push_jobs(run_id);
 create index if not exists idx_pushed_contacts_run_id on pushed_contacts(run_id);
-
-alter table runs add column if not exists account_id text references accounts(id);
-alter table runs add column if not exists created_by_user_id text references users(id);
-
 
 create table if not exists batches (
   id text primary key,

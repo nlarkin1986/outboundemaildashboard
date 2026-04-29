@@ -24,7 +24,7 @@ function authError(request: Request) {
 const tools = [
   {
     name: 'create_outbound_sequence',
-    description: 'Create a Gladly outbound sequence batch for a Cowork user. Returns immediately with a durable batch_id, dashboard URL, review URL, and polling instructions. If status is queued or processing, call get_outbound_sequence_status after recommended_poll_after_seconds until terminal/action state. Requires actor.email.',
+    description: 'Create a Gladly outbound sequence batch for a Cowork user. Returns immediately with a durable batch_id, dashboard URL, review URL, and polling instructions. If status is queued, processing, or pushing, call get_outbound_sequence_status after recommended_poll_after_seconds until terminal/action state. Requires actor.email.',
     inputSchema: {
       type: 'object',
       required: ['actor', 'companies'],

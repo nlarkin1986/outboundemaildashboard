@@ -6,7 +6,7 @@ Use this wording in Cowork / Managed Agent workflow instructions for the Gladly 
 
 When you call `create_outbound_sequence`, treat the returned `batch_id` as the durable workflow handle.
 
-If the response status is `queued` or `processing`, do not tell the user the workflow is complete. Wait `recommended_poll_after_seconds`, then call `get_outbound_sequence_status` with:
+If the response status is `queued`, `processing`, or `pushing`, do not tell the user the workflow is complete. Wait `recommended_poll_after_seconds`, then call `get_outbound_sequence_status` with:
 
 - `batch_id` from the create response
 - `actor.email` for the current Cowork user
@@ -19,7 +19,7 @@ Repeat until one of these statuses is returned:
 - `review_submitted`
 - `pushed`
 
-Default polling cadence is 30 seconds, max 8 attempts. If max attempts are reached and the job is still `queued` or `processing`, tell the user the job is still running and provide `dashboard_status_url`. The user or Cowork can resume later by calling `get_outbound_sequence_status` with the same `batch_id`.
+Default polling cadence is 30 seconds, max 8 attempts. If max attempts are reached and the job is still `queued`, `processing`, or `pushing`, tell the user the job is still running and provide `dashboard_status_url`. The user or Cowork can resume later by calling `get_outbound_sequence_status` with the same `batch_id`.
 
 Never draft from memory after polling. Use the latest `get_outbound_sequence_status` result and dashboard/review URLs as source of truth.
 
