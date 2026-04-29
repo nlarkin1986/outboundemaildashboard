@@ -83,3 +83,68 @@ export type InstantlyPushPayload = {
   emails: SequenceEmail[];
   idempotency_key: string;
 };
+
+export type BatchStatus = 'queued' | 'processing' | 'ready_for_review' | 'review_submitted' | 'pushing' | 'pushed' | 'partially_failed' | 'failed';
+export type BatchRunStatus = 'queued' | 'researching' | 'writing' | 'ready_for_review' | 'failed';
+
+export type CompanyInput = {
+  company_name: string;
+  domain?: string;
+  contacts?: import('./schemas').ContactInput[];
+};
+
+export type Batch = {
+  id: string;
+  source: 'cowork' | 'manual' | 'api';
+  status: BatchStatus;
+  requested_by?: string;
+  cowork_thread_id?: string;
+  campaign_id?: string;
+  mode: 'fast' | 'deep';
+  review_token: string;
+  review_url?: string;
+  error?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BatchRun = {
+  batch_id: string;
+  run_id: string;
+  company_name: string;
+  domain?: string;
+  status: BatchRunStatus;
+  error?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ResearchArtifact = {
+  id: string;
+  run_id: string;
+  company_name: string;
+  domain?: string;
+  core_hypothesis?: string;
+  evidence_ledger: unknown[];
+  source_urls: string[];
+  raw_summary: unknown;
+  created_at: string;
+  updated_at: string;
+};
+
+export type BatchReviewState = {
+  batch: Batch;
+  runs: Array<BatchRun & { review: ReviewState }>;
+};
+
+export type CoworkMessage = {
+  id: string;
+  batch_id: string;
+  thread_id?: string;
+  direction: 'outbound' | 'inbound';
+  status: 'pending' | 'sent' | 'failed' | 'noop';
+  payload: unknown;
+  response?: unknown;
+  error?: string;
+  created_at: string;
+};

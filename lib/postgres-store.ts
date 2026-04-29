@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import type { PoolClient } from 'pg';
-import { createRunSchema, saveReviewSchema, type CreateRunInput, type SaveReviewInput } from './schemas';
+import { createBatchSchema, createRunSchema, saveBatchReviewSchema, saveReviewSchema, type CreateBatchInput, type CreateRunInput, type SaveBatchReviewInput, type SaveReviewInput } from './schemas';
 import { query, transaction, iso } from './db';
-import type { Contact, InstantlyPushPayload, ReviewContact, ReviewEvent, ReviewState, Run, SequenceEmail } from './types';
+import type { Batch, BatchReviewState, BatchRun, Contact, CoworkMessage, InstantlyPushPayload, ResearchArtifact, ReviewContact, ReviewEvent, ReviewState, Run, SequenceEmail } from './types';
 
 const now = () => new Date().toISOString();
 const id = (prefix: string) => `${prefix}_${crypto.randomUUID()}`;
@@ -94,7 +94,7 @@ async function insertEvent(client: PoolClient, event: Omit<ReviewEvent, 'id' | '
 }
 
 export async function resetStore() {
-  await query('truncate table pushed_contacts, push_jobs, review_events, sequence_emails, contacts, runs restart identity cascade');
+  await query('truncate table cowork_messages, research_artifacts, batch_runs, batches, pushed_contacts, push_jobs, review_events, sequence_emails, contacts, runs restart identity cascade');
 }
 
 export async function createRun(input: CreateRunInput): Promise<Run & { contacts: Contact[] }> {
@@ -261,7 +261,7 @@ export async function pushApprovedContacts(runId: string, pusher: InstantlyPushe
   await query(`update runs set status='pushing', updated_at=$2 where id=$1`, [run.id, now()]);
   let pushed = 0;
   let failed = 0;
-  const contacts = (await contactsForRun(run.id)).filter((c) => c.status === 'approved');
+  const contacts = (await contactsForRun(run.id)).filter((c) => c.status === 'approved' && c.email && !c.email.endsWith('.invalid'));
   for (const contact of contacts) {
     const key = `${run.id}:${contact.id}`;
     const existing = await query('select id from pushed_contacts where run_id=$1 and contact_id=$2', [run.id, contact.id]);
@@ -286,4 +286,163 @@ export async function pushApprovedContacts(runId: string, pusher: InstantlyPushe
   }
   await query(`update runs set status=$2, updated_at=$3 where id=$1`, [run.id, failed ? 'partially_failed' : 'pushed', now()]);
   return { ok: true, pushed, failed, campaign_paused: true };
+}
+
+
+function reviewUrlForBatchTokenLocal(token: string) {
+  const base = process.env.APP_BASE_URL ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+  return `${base}/review/batch/${token}`;
+}
+
+function toBatch(row: any, review_token = ''): Batch & { companies: Array<{ company_name: string; domain?: string; contacts?: any[] }> } {
+  return {
+    id: row.id,
+    source: row.source,
+    status: row.status,
+    requested_by: row.requested_by ?? undefined,
+    cowork_thread_id: row.cowork_thread_id ?? undefined,
+    campaign_id: row.campaign_id ?? undefined,
+    mode: row.mode,
+    review_token,
+    review_url: row.review_url ?? undefined,
+    error: row.error ?? undefined,
+    created_at: iso(row.created_at)!,
+    updated_at: iso(row.updated_at)!,
+    companies: row.companies_json ?? [],
+  };
+}
+
+function toBatchRun(row: any): BatchRun {
+  return { batch_id: row.batch_id, run_id: row.run_id, company_name: row.company_name, domain: row.domain ?? undefined, status: row.status, error: row.error ?? undefined, created_at: iso(row.created_at)!, updated_at: iso(row.updated_at)! };
+}
+
+export async function createBatch(input: CreateBatchInput): Promise<Batch & { companies: Array<{ company_name: string; domain?: string; contacts?: any[] }> }> {
+  const parsed = createBatchSchema.safeParse(input);
+  if (!parsed.success) throw new Error(`Invalid batch payload: ${parsed.error.message}`);
+  const data = parsed.data;
+  const token = reviewToken();
+  const timestamp = now();
+  const reviewUrl = reviewUrlForBatchTokenLocal(token);
+  const result = await query(
+    `insert into batches (id, source, status, requested_by, cowork_thread_id, campaign_id, mode, review_token_hash, review_url, companies_json, created_at, updated_at)
+     values ($1,$2,'queued',$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$10) returning *`,
+    [id('batch'), data.source, data.requested_by ?? null, data.cowork_thread_id ?? null, data.campaign_id ?? null, data.mode, tokenHash(token), reviewUrl, JSON.stringify(data.companies), timestamp],
+  );
+  return clone(toBatch(result.rows[0], token));
+}
+
+export async function getBatchById(batchId: string) {
+  const result = await query('select * from batches where id=$1', [batchId]);
+  return result.rows[0] ? clone(toBatch(result.rows[0])) : null;
+}
+
+export async function listBatchRuns(batchId: string): Promise<BatchRun[]> {
+  const result = await query('select * from batch_runs where batch_id=$1 order by created_at asc', [batchId]);
+  return result.rows.map(toBatchRun);
+}
+
+export async function attachRunToBatch(batchId: string, runId: string, company: { company_name: string; domain?: string }, status: BatchRun['status'] = 'queued') {
+  await query(
+    `insert into batch_runs (batch_id, run_id, company_name, domain, status, created_at, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$6) on conflict (batch_id, run_id) do update set status=excluded.status, updated_at=excluded.updated_at`,
+    [batchId, runId, company.company_name, company.domain ?? null, status, now()],
+  );
+}
+
+export async function updateBatchStatus(batchId: string, status: Batch['status'], error?: string) {
+  await query('update batches set status=$2, error=$3, updated_at=$4 where id=$1', [batchId, status, error ?? null, now()]);
+}
+
+export async function updateBatchRunStatus(batchId: string, runId: string, status: BatchRun['status'], error?: string) {
+  await query('update batch_runs set status=$3, error=$4, updated_at=$5 where batch_id=$1 and run_id=$2', [batchId, runId, status, error ?? null, now()]);
+}
+
+export async function saveResearchArtifact(runId: string, artifact: Partial<ResearchArtifact> & { company_name: string }) {
+  await query(
+    `insert into research_artifacts (id, run_id, company_name, domain, core_hypothesis, evidence_ledger, source_urls, raw_summary, created_at, updated_at)
+     values ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9,$9)`,
+    [id('artifact'), runId, artifact.company_name, artifact.domain ?? null, artifact.core_hypothesis ?? null, JSON.stringify(artifact.evidence_ledger ?? []), JSON.stringify(artifact.source_urls ?? []), JSON.stringify(artifact.raw_summary ?? {}), now()],
+  );
+}
+
+export async function getBatchReviewByToken(token: string): Promise<BatchReviewState> {
+  const result = await query('select * from batches where review_token_hash=$1', [tokenHash(token)]);
+  if (!result.rows[0]) throw new Error('Batch review token not found');
+  const batch = toBatch(result.rows[0], token);
+  const batchRuns = await listBatchRuns(batch.id);
+  const runs = [];
+  for (const br of batchRuns) {
+    const runResult = await query('select * from runs where id=$1', [br.run_id]);
+    if (!runResult.rows[0]) continue;
+    const runTokenless = toRun(runResult.rows[0]);
+    const contacts = await contactsForRun(br.run_id);
+    const reviewContacts = await Promise.all(contacts.map(async (contact) => ({ ...contact, emails: await emailsForContact(contact.id) })));
+    runs.push({ ...br, review: { run: runTokenless, contacts: reviewContacts } });
+  }
+  return clone({ batch, runs });
+}
+
+export async function saveBatchReviewState(token: string, input: SaveBatchReviewInput, actor = 'anonymous') {
+  const parsed = saveBatchReviewSchema.safeParse(input);
+  if (!parsed.success) throw new Error(`Invalid batch review payload: ${parsed.error.message}`);
+  const state = await getBatchReviewByToken(token);
+  for (const runInput of parsed.data.runs) {
+    const item = state.runs.find((r) => r.run_id === runInput.run_id);
+    if (!item) throw new Error(`Run ${runInput.run_id} does not belong to batch`);
+    // Save directly without needing original single-run token.
+    await transaction(async (client) => {
+      for (const incoming of runInput.contacts) {
+        const contactUpdate = await client.query(`update contacts set status=$2, primary_angle=$3, opening_hook=$4, proof_used=$5, guardrail=$6, evidence_json=$7::jsonb, qa_warnings_json=$8::jsonb, updated_at=$9 where id=$1 and run_id=$10`, [incoming.id, incoming.status, incoming.primary_angle ?? null, incoming.opening_hook ?? null, incoming.proof_used ?? null, incoming.guardrail ?? null, JSON.stringify(incoming.evidence_urls ?? []), JSON.stringify(incoming.qa_warnings ?? []), now(), runInput.run_id]);
+        if (contactUpdate.rowCount !== 1) throw new Error(`Contact ${incoming.id} does not belong to batch run ${runInput.run_id}`);
+        for (const email of incoming.emails) {
+          const emailUpdate = await client.query(`update sequence_emails set subject=$3, body_html=$4, body_text=$5, edited_by=$6, edited_at=$7, updated_at=$7 where contact_id=$1 and step_number=$2`, [incoming.id, email.step_number, email.subject, email.body_html, email.body_text ?? stripHtml(email.body_html), actor, now()]);
+          if (emailUpdate.rowCount !== 1) throw new Error(`Email step ${email.step_number} not found for contact ${incoming.id}`);
+        }
+      }
+    });
+  }
+  return { ok: true as const, saved_at: now() };
+}
+
+export async function submitBatchReview(token: string, actor = 'anonymous') {
+  const state = await getBatchReviewByToken(token);
+  let approved = 0;
+  const push_job_ids: string[] = [];
+  for (const item of state.runs) {
+    const good = item.review.contacts.filter((c) => c.status === 'approved' && c.email && !c.email.endsWith('.invalid'));
+    approved += good.length;
+    if (good.length) {
+      await query(`update runs set status='review_submitted', updated_at=$2 where id=$1`, [item.run_id, now()]);
+      const jobId = id('push');
+      await query(`insert into push_jobs (id, run_id, status, instantly_campaign_id, idempotency_key, attempts, created_at, updated_at) values ($1,$2,'queued',$3,$4,0,$5,$5) on conflict (idempotency_key) do nothing`, [jobId, item.run_id, item.review.run.campaign_id ?? null, `push:${item.run_id}`, now()]);
+      push_job_ids.push(jobId);
+    }
+  }
+  if (approved === 0) throw new Error('At least one approved contact with a real email is required before submit');
+  await updateBatchStatus(state.batch.id, 'review_submitted');
+  return { ok: true as const, batch_id: state.batch.id, approved_contacts: approved, push_job_ids, status: 'review_submitted', message: 'Approved contacts are queued for server-side Instantly push.' };
+}
+
+export async function recordCoworkMessage(input: Omit<CoworkMessage, 'id' | 'created_at'>) {
+  const result = await query(`insert into cowork_messages (id, batch_id, thread_id, direction, status, payload, response, error, created_at) values ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8,$9) returning *`, [id('cowork_msg'), input.batch_id, input.thread_id ?? null, input.direction, input.status, JSON.stringify(input.payload ?? {}), input.response ? JSON.stringify(input.response) : null, input.error ?? null, now()]);
+  const row = result.rows[0];
+  return clone({ id: row.id, batch_id: row.batch_id, thread_id: row.thread_id ?? undefined, direction: row.direction, status: row.status, payload: row.payload, response: row.response, error: row.error ?? undefined, created_at: iso(row.created_at)! });
+}
+
+export function reviewUrlForBatchToken(token: string) { return reviewUrlForBatchTokenLocal(token); }
+
+export async function pushApprovedContactsForBatch(batchId: string, pusher: InstantlyPusher) {
+  const batch = await getBatchById(batchId);
+  if (!batch) throw new Error(`Batch not found: ${batchId}`);
+  if (batch.status !== 'review_submitted' && batch.status !== 'pushing' && batch.status !== 'partially_failed') throw new Error('Batch must be review_submitted before push');
+  await updateBatchStatus(batchId, 'pushing');
+  let pushed = 0;
+  let failed = 0;
+  for (const br of await listBatchRuns(batchId)) {
+    const result = await pushApprovedContacts(br.run_id, pusher);
+    pushed += result.pushed;
+    failed += result.failed;
+  }
+  await updateBatchStatus(batchId, failed ? 'partially_failed' : 'pushed');
+  return { ok: true as const, pushed, failed, campaign_paused: true };
 }

@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
-import { createRunSchema, saveReviewSchema, type CreateRunInput, type SaveReviewInput } from './schemas';
-import type { Contact, InstantlyPushPayload, PushJob, ReviewContact, ReviewEvent, ReviewState, Run, SequenceEmail } from './types';
+import { createBatchSchema, createRunSchema, saveBatchReviewSchema, saveReviewSchema, type CreateBatchInput, type CreateRunInput, type SaveBatchReviewInput, type SaveReviewInput } from './schemas';
+import type { Batch, BatchReviewState, BatchRun, Contact, CoworkMessage, InstantlyPushPayload, PushJob, ResearchArtifact, ReviewContact, ReviewEvent, ReviewState, Run, SequenceEmail } from './types';
 
 type Db = {
   runs: Map<string, Run>;
@@ -9,12 +9,16 @@ type Db = {
   events: ReviewEvent[];
   pushJobs: Map<string, PushJob>;
   pushedContacts: Set<string>;
+  batches: Map<string, Batch & { companies: Array<{ company_name: string; domain?: string; contacts?: any[] }> }>;
+  batchRuns: Map<string, BatchRun>;
+  researchArtifacts: Map<string, ResearchArtifact>;
+  coworkMessages: Map<string, CoworkMessage>;
 };
 
 const globalForStore = globalThis as unknown as { __outboundStore?: Db };
 
 function newDb(): Db {
-  return { runs: new Map(), contacts: new Map(), emails: new Map(), events: [], pushJobs: new Map(), pushedContacts: new Set() };
+  return { runs: new Map(), contacts: new Map(), emails: new Map(), events: [], pushJobs: new Map(), pushedContacts: new Set(), batches: new Map(), batchRuns: new Map(), researchArtifacts: new Map(), coworkMessages: new Map() };
 }
 
 const db = globalForStore.__outboundStore ?? newDb();
@@ -31,6 +35,10 @@ export function resetStore() {
   db.events.length = 0;
   db.pushJobs.clear();
   db.pushedContacts.clear();
+  db.batches.clear();
+  db.batchRuns.clear();
+  db.researchArtifacts.clear();
+  db.coworkMessages.clear();
 }
 
 function clone<T>(value: T): T {
@@ -204,7 +212,7 @@ export async function pushApprovedContacts(runId: string, pusher: InstantlyPushe
   run.updated_at = now();
   let pushed = 0;
   let failed = 0;
-  for (const contact of contactsForRun(run.id).filter((c) => c.status === 'approved')) {
+  for (const contact of contactsForRun(run.id).filter((c) => c.status === 'approved' && c.email && !c.email.endsWith('.invalid'))) {
     const key = `${run.id}:${contact.id}`;
     if (db.pushedContacts.has(key)) continue;
     db.pushedContacts.add(key);
@@ -227,4 +235,147 @@ export async function pushApprovedContacts(runId: string, pusher: InstantlyPushe
 export function reviewUrlForRun(run: Run) {
   const base = process.env.APP_BASE_URL ?? 'http://localhost:3000';
   return `${base}/review/${run.review_token}`;
+}
+
+
+function tokenForBatch() { return reviewToken(); }
+
+export async function createBatch(input: CreateBatchInput): Promise<Batch & { companies: Array<{ company_name: string; domain?: string; contacts?: any[] }> }> {
+  const parsed = createBatchSchema.safeParse(input);
+  if (!parsed.success) throw new Error(`Invalid batch payload: ${parsed.error.message}`);
+  const data = parsed.data;
+  const timestamp = now();
+  const token = tokenForBatch();
+  const batch: Batch & { companies: Array<{ company_name: string; domain?: string; contacts?: any[] }> } = {
+    id: id('batch'),
+    source: data.source,
+    status: 'queued',
+    requested_by: data.requested_by,
+    cowork_thread_id: data.cowork_thread_id,
+    campaign_id: data.campaign_id,
+    mode: data.mode,
+    review_token: token,
+    review_url: reviewUrlForBatchToken(token),
+    created_at: timestamp,
+    updated_at: timestamp,
+    companies: data.companies,
+  };
+  db.batches.set(batch.id, batch);
+  return clone(batch);
+}
+
+export async function getBatchById(batchId: string): Promise<(Batch & { companies: Array<{ company_name: string; domain?: string; contacts?: any[] }> }) | null> {
+  const batch = db.batches.get(batchId);
+  return batch ? clone(batch) : null;
+}
+
+export async function listBatchRuns(batchId: string): Promise<BatchRun[]> {
+  return clone([...db.batchRuns.values()].filter((r) => r.batch_id === batchId).sort((a, b) => a.created_at.localeCompare(b.created_at)));
+}
+
+export async function attachRunToBatch(batchId: string, runId: string, company: { company_name: string; domain?: string }, status: BatchRun['status'] = 'queued') {
+  const timestamp = now();
+  db.batchRuns.set(`${batchId}:${runId}`, { batch_id: batchId, run_id: runId, company_name: company.company_name, domain: company.domain, status, created_at: timestamp, updated_at: timestamp });
+}
+
+export async function updateBatchStatus(batchId: string, status: Batch['status'], error?: string) {
+  const batch = db.batches.get(batchId);
+  if (!batch) throw new Error(`Batch not found: ${batchId}`);
+  batch.status = status;
+  batch.error = error;
+  batch.updated_at = now();
+}
+
+export async function updateBatchRunStatus(batchId: string, runId: string, status: BatchRun['status'], error?: string) {
+  const row = db.batchRuns.get(`${batchId}:${runId}`);
+  if (!row) throw new Error(`Batch run not found: ${batchId}/${runId}`);
+  row.status = status;
+  row.error = error;
+  row.updated_at = now();
+}
+
+export async function saveResearchArtifact(runId: string, artifact: Partial<ResearchArtifact> & { company_name: string }) {
+  const timestamp = now();
+  const row: ResearchArtifact = {
+    id: id('artifact'),
+    run_id: runId,
+    company_name: artifact.company_name,
+    domain: artifact.domain,
+    core_hypothesis: artifact.core_hypothesis,
+    evidence_ledger: artifact.evidence_ledger ?? [],
+    source_urls: artifact.source_urls ?? [],
+    raw_summary: artifact.raw_summary ?? {},
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+  db.researchArtifacts.set(row.id, row);
+}
+
+export async function getBatchReviewByToken(token: string): Promise<BatchReviewState> {
+  const batch = [...db.batches.values()].find((b) => b.review_token === token);
+  if (!batch) throw new Error('Batch review token not found');
+  const runs = [];
+  for (const br of await listBatchRuns(batch.id)) {
+    const run = db.runs.get(br.run_id);
+    if (!run) continue;
+    runs.push({ ...br, review: await getReviewStateByToken(run.review_token) });
+  }
+  return clone({ batch, runs });
+}
+
+export async function saveBatchReviewState(token: string, input: SaveBatchReviewInput, actor = 'anonymous') {
+  const parsed = saveBatchReviewSchema.safeParse(input);
+  if (!parsed.success) throw new Error(`Invalid batch review payload: ${parsed.error.message}`);
+  const state = await getBatchReviewByToken(token);
+  for (const runInput of parsed.data.runs) {
+    const item = state.runs.find((r) => r.run_id === runInput.run_id);
+    if (!item) throw new Error(`Run ${runInput.run_id} does not belong to batch`);
+    await saveReviewState(item.review.run.review_token, { contacts: runInput.contacts }, actor);
+  }
+  return { ok: true as const, saved_at: now() };
+}
+
+export async function submitBatchReview(token: string, actor = 'anonymous') {
+  const state = await getBatchReviewByToken(token);
+  let approved = 0;
+  const push_job_ids: string[] = [];
+  for (const item of state.runs) {
+    const approvedContacts = item.review.contacts.filter((c) => c.status === 'approved' && c.email && !c.email.endsWith('.invalid'));
+    approved += approvedContacts.length;
+    if (approvedContacts.length) {
+      const result = await submitApproved(item.review.run.review_token, actor);
+      push_job_ids.push(result.push_job_id);
+    }
+  }
+  if (approved === 0) throw new Error('At least one approved contact with a real email is required before submit');
+  await updateBatchStatus(state.batch.id, 'review_submitted');
+  return { ok: true as const, batch_id: state.batch.id, approved_contacts: approved, push_job_ids, status: 'review_submitted', message: 'Approved contacts are queued for server-side Instantly push.' };
+}
+
+export async function recordCoworkMessage(input: Omit<CoworkMessage, 'id' | 'created_at'>) {
+  const row: CoworkMessage = { ...input, id: id('cowork_msg'), created_at: now() };
+  db.coworkMessages.set(row.id, row);
+  return clone(row);
+}
+
+export function reviewUrlForBatchToken(token: string) {
+  const base = process.env.APP_BASE_URL ?? 'http://localhost:3000';
+  return `${base}/review/batch/${token}`;
+}
+
+export async function pushApprovedContactsForBatch(batchId: string, pusher: InstantlyPusher) {
+  const batch = db.batches.get(batchId);
+  if (!batch) throw new Error(`Batch not found: ${batchId}`);
+  if (batch.status !== 'review_submitted' && batch.status !== 'pushing' && batch.status !== 'partially_failed') throw new Error('Batch must be review_submitted before push');
+  batch.status = 'pushing';
+  let pushed = 0;
+  let failed = 0;
+  for (const br of await listBatchRuns(batchId)) {
+    const result = await pushApprovedContacts(br.run_id, pusher);
+    pushed += result.pushed;
+    failed += result.failed;
+  }
+  batch.status = failed ? 'partially_failed' : 'pushed';
+  batch.updated_at = now();
+  return { ok: true as const, pushed, failed, campaign_paused: true };
 }

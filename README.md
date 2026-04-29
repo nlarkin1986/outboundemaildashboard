@@ -12,12 +12,17 @@ Production-oriented MVP for the Cowork → Vercel → review approval → server
 - Save endpoint: `POST /api/review/:token/save`.
 - Submit endpoint: `POST /api/review/:token/submit`.
 - Internal push endpoint: `POST /api/internal/push/:runId`.
+- Batch Cowork webhook: `POST /api/webhooks/cowork/batch`.
+- Batch review dashboard: `/review/batch/:token`.
+- Batch save/submit endpoints: `POST /api/review/batch/:token/save` and `POST /api/review/batch/:token/submit`.
+- Internal batch process/push endpoints: `POST /api/internal/process-batch/:batchId` and `POST /api/internal/push-batch/:batchId`.
 - Instantly client seam that keeps API keys server-side.
 - AI SDK/Claude generation seam and structured output schema.
+- Batch agent seam that persists evidence ledgers, guardrails, and agent-generated drafts into the review dashboard.
 - Exa and Browserbase server-side research seams.
-- Cowork webhook placeholder.
+- Cowork webhook/postback client with noop behavior until Cowork API env is configured.
 - Vercel config with function duration hints.
-- Tests for run validation, review persistence, and idempotent push behavior.
+- Tests for run validation, review persistence, batch review, agent schema, and idempotent push behavior.
 
 ## Important security posture
 
@@ -110,9 +115,10 @@ EXA_API_KEY=...
 BROWSERBASE_API_KEY=...
 BROWSERBASE_PROJECT_ID=...
 INSTANTLY_API_KEY=...
-COWORK_API_KEY=...
-COWORK_WEBHOOK_SECRET=...
-REVIEW_SIGNING_SECRET=...
+COWORK_API_BASE_URL=...
+COWORK_API_KEY=***
+COWORK_WEBHOOK_SECRET=***
+REVIEW_SIGNING_SECRET=***
 ```
 
 After setting `DATABASE_URL`, run the schema once against production:
@@ -123,16 +129,48 @@ npm run db:setup
 
 If using Vercel Postgres/Neon/Supabase, run that command from a machine with the same `DATABASE_URL`, or from Vercel's environment through your deployment workflow.
 
-## Push endpoint
+## Push endpoints
 
-The push endpoint is internal only:
+Single-run push endpoint:
 
 ```bash
 curl -X POST "$APP_BASE_URL/api/internal/push/$RUN_ID" \
   -H "Authorization: Bearer $INTERNAL_API_SECRET"
 ```
 
-It will return `503` if `INTERNAL_API_SECRET` is not configured and `401` if the header is missing/wrong.
+Batch process and push endpoints:
+
+```bash
+curl -X POST "$APP_BASE_URL/api/internal/process-batch/$BATCH_ID" \
+  -H "Authorization: Bearer $INTERNAL_API_SECRET"
+
+curl -X POST "$APP_BASE_URL/api/internal/push-batch/$BATCH_ID" \
+  -H "Authorization: Bearer $INTERNAL_API_SECRET"
+```
+
+They return `503` if `INTERNAL_API_SECRET` is not configured and `401` if the header is missing/wrong.
+
+## Batch Cowork webhook
+
+```bash
+curl -X POST "$APP_BASE_URL/api/webhooks/cowork/batch" \
+  -H "Content-Type: application/json" \
+  -H "x-cowork-secret: $COWORK_WEBHOOK_SECRET" \
+  -d '{
+    "type":"outbound.batch.requested",
+    "payload":{
+      "thread_id":"cowork-thread-123",
+      "campaign_id":"camp_test",
+      "target_persona":"CX / Support leaders",
+      "companies":[
+        {"company_name":"The Black Tux","domain":"theblacktux.com","contacts":[{"first_name":"Alex","last_name":"Morgan","title":"VP CX","company":"The Black Tux","email":"alex@example.com"}]},
+        {"company_name":"Kizik","domain":"kizik.com"}
+      ]
+    }
+  }'
+```
+
+The response includes `batch_id`, `review_url`, and `process_url`. Company-only rows are allowed for account-level drafts, but they are intentionally not pushable until real contact emails are supplied.
 
 ## Validation
 

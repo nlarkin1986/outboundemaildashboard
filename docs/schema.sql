@@ -97,3 +97,62 @@ create index if not exists idx_sequence_emails_contact_id on sequence_emails(con
 create index if not exists idx_review_events_run_id on review_events(run_id);
 create index if not exists idx_push_jobs_run_id on push_jobs(run_id);
 create index if not exists idx_pushed_contacts_run_id on pushed_contacts(run_id);
+
+
+create table if not exists batches (
+  id text primary key,
+  source text not null default 'cowork',
+  status text not null check (status in ('queued','processing','ready_for_review','review_submitted','pushing','pushed','partially_failed','failed')),
+  requested_by text,
+  cowork_thread_id text,
+  campaign_id text,
+  mode text not null default 'fast' check (mode in ('fast','deep')),
+  review_token_hash text unique,
+  review_url text,
+  companies_json jsonb not null default '[]',
+  error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists batch_runs (
+  batch_id text not null references batches(id) on delete cascade,
+  run_id text not null references runs(id) on delete cascade,
+  company_name text not null,
+  domain text,
+  status text not null check (status in ('queued','researching','writing','ready_for_review','failed')),
+  error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (batch_id, run_id)
+);
+
+create table if not exists research_artifacts (
+  id text primary key,
+  run_id text not null references runs(id) on delete cascade,
+  company_name text not null,
+  domain text,
+  core_hypothesis text,
+  evidence_ledger jsonb not null default '[]',
+  source_urls jsonb not null default '[]',
+  raw_summary jsonb not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists cowork_messages (
+  id text primary key,
+  batch_id text not null references batches(id) on delete cascade,
+  thread_id text,
+  direction text not null,
+  status text not null,
+  payload jsonb not null default '{}',
+  response jsonb,
+  error text,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_batch_runs_batch_id on batch_runs(batch_id);
+create index if not exists idx_batch_runs_run_id on batch_runs(run_id);
+create index if not exists idx_research_artifacts_run_id on research_artifacts(run_id);
+create index if not exists idx_cowork_messages_batch_id on cowork_messages(batch_id);

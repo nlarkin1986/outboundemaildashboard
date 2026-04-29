@@ -47,3 +47,31 @@ export type CreateRunInput = z.input<typeof createRunSchema>;
 export type ContactInput = z.input<typeof contactInputSchema>;
 export type ReviewContactInput = z.infer<typeof reviewContactSchema>;
 export type SaveReviewInput = z.infer<typeof saveReviewSchema>;
+
+
+export const companyInputSchema = z.object({
+  company_name: z.string().min(1),
+  domain: z.string().optional(),
+  contacts: z.array(contactInputSchema).optional(),
+});
+
+export const createBatchSchema = z.object({
+  requested_by: z.string().optional(),
+  cowork_thread_id: z.string().optional(),
+  campaign_id: z.string().optional(),
+  mode: z.enum(['fast', 'deep']).default('fast'),
+  source: z.enum(['cowork', 'manual', 'api']).default('cowork'),
+  target_persona: z.string().optional(),
+  companies: z.array(companyInputSchema).min(1),
+});
+
+export const saveBatchReviewSchema = z.object({
+  runs: z.array(z.object({
+    run_id: z.string(),
+    contacts: z.array(reviewContactSchema),
+  })).min(1),
+});
+
+export type CompanyInput = z.input<typeof companyInputSchema>;
+export type CreateBatchInput = z.input<typeof createBatchSchema>;
+export type SaveBatchReviewInput = z.infer<typeof saveBatchReviewSchema>;

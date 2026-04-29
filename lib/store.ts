@@ -26,3 +26,21 @@ export function reviewUrlForRun(run: Run) {
   const appBase = process.env.APP_BASE_URL ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
   return `${appBase}/review/${run.review_token}`;
 }
+
+export function createBatch(...args: Parameters<typeof memoryStore.createBatch>) { return store().createBatch(...args); }
+export function getBatchById(...args: Parameters<typeof memoryStore.getBatchById>) { return store().getBatchById(...args); }
+export function getBatchReviewByToken(...args: Parameters<typeof memoryStore.getBatchReviewByToken>) { return store().getBatchReviewByToken(...args); }
+export function listBatchRuns(...args: Parameters<typeof memoryStore.listBatchRuns>) { return store().listBatchRuns(...args); }
+export function attachRunToBatch(...args: Parameters<typeof memoryStore.attachRunToBatch>) { return store().attachRunToBatch(...args); }
+export function updateBatchStatus(...args: Parameters<typeof memoryStore.updateBatchStatus>) { return store().updateBatchStatus(...args); }
+export function updateBatchRunStatus(...args: Parameters<typeof memoryStore.updateBatchRunStatus>) { return store().updateBatchRunStatus(...args); }
+export function saveResearchArtifact(...args: Parameters<typeof memoryStore.saveResearchArtifact>) { return store().saveResearchArtifact(...args); }
+export function saveBatchReviewState(...args: Parameters<typeof memoryStore.saveBatchReviewState>) { return store().saveBatchReviewState(...args); }
+export function submitBatchReview(...args: Parameters<typeof memoryStore.submitBatchReview>) { return store().submitBatchReview(...args); }
+export function recordCoworkMessage(...args: Parameters<typeof memoryStore.recordCoworkMessage>) { return store().recordCoworkMessage(...args); }
+export function pushApprovedContactsForBatch(...args: Parameters<typeof memoryStore.pushApprovedContactsForBatch>) { return store().pushApprovedContactsForBatch(...args); }
+
+export function reviewUrlForBatchToken(token: string) {
+  const appBase = process.env.APP_BASE_URL ?? (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+  return `${appBase}/review/batch/${token}`;
+}
