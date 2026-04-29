@@ -1,18 +1,10 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { editableTextToHtml, emailParagraphs, stripEmailHtml } from '@/lib/email-format';
+import { normalizeReviewStateForEditing } from '@/lib/review-editor-state';
+import { nextContactId } from '@/lib/review-navigation';
 import type { ReviewContact, ReviewState } from '@/lib/types';
-
-function stripHtml(html: string) {
-  const spaced = html
-    .replace(/<\s*\/p\s*>\s*<\s*p\s*>/gi, ' ')
-    .replace(/<\s*br\s*\/?\s*>/gi, ' ')
-    .replace(/<\s*\/div\s*>\s*<\s*div\s*>/gi, ' ');
-  if (typeof document === 'undefined') return spaced.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-  const el = document.createElement('div');
-  el.innerHTML = spaced;
-  return (el.textContent || el.innerText || '').replace(/\s+/g, ' ').trim();
-}
 
 function initials(contact: ReviewContact) {
   return `${contact.first_name?.[0] ?? ''}${contact.last_name?.[0] ?? ''}`.toUpperCase() || 'C';
@@ -31,11 +23,12 @@ function statusClass(status: ReviewContact['status']) {
 }
 
 export function ReviewApp({ initialState, token }: { initialState: ReviewState; token: string }) {
-  const [state, setState] = useState(initialState);
+  const [state, setState] = useState(() => normalizeReviewStateForEditing(initialState));
   const [selectedId, setSelectedId] = useState(initialState.contacts[0]?.id);
   const [filter, setFilter] = useState<'all' | 'approved' | 'needs_edit' | 'skipped' | 'warnings'>('all');
   const [query, setQuery] = useState('');
   const [message, setMessage] = useState('No Instantly push has been made yet.');
+  const [popup, setPopup] = useState<string | null>(null);
   const selected = state.contacts.find((c) => c.id === selectedId) ?? state.contacts[0];
 
   const counts = useMemo(() => ({
@@ -57,12 +50,12 @@ export function ReviewApp({ initialState, token }: { initialState: ReviewState; 
     setState((current) => ({ ...current, contacts: current.contacts.map((c) => c.id === id ? { ...c, ...patch } : c) }));
   }
 
-  function updateEmail(contactId: string, step: number, patch: { subject?: string; body_html?: string }) {
+  function updateEmail(contactId: string, step: number, patch: { subject?: string; body_html?: string; body_text?: string }) {
     setState((current) => ({
       ...current,
       contacts: current.contacts.map((c) => c.id !== contactId ? c : {
         ...c,
-        emails: c.emails.map((email) => email.step_number === step ? { ...email, ...patch, body_text: patch.body_html ? stripHtml(patch.body_html) : email.body_text } : email),
+        emails: c.emails.map((email) => email.step_number === step ? { ...email, ...patch, body_text: patch.body_text ?? (patch.body_html ? stripEmailHtml(patch.body_html) : email.body_text) } : email),
       }),
     }));
   }
@@ -79,6 +72,10 @@ export function ReviewApp({ initialState, token }: { initialState: ReviewState; 
     const res = await fetch(`/api/review/${token}/submit`, { method: 'POST' });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error ?? 'Submit failed');
+    const nextId = nextContactId(state.contacts.map((contact) => contact.id), selected.id);
+    const advanced = nextId && nextId !== selected.id;
+    if (nextId) setSelectedId(nextId);
+    setPopup(advanced ? 'Sequence submitted. Moving to the next sequence.' : 'Sequence submitted. You are on the final sequence.');
     setMessage(`${body.approved_count} approved contact(s) queued for server-side Instantly push. Campaign remains paused.`);
   }
 
@@ -98,7 +95,7 @@ export function ReviewApp({ initialState, token }: { initialState: ReviewState; 
 
   function exportCsv() {
     const rows = [['email','first_name','last_name','company','title','status','subject_1','body_1','subject_2','body_2','subject_3','body_3']];
-    for (const c of state.contacts) rows.push([c.email, c.first_name ?? '', c.last_name ?? '', c.company ?? '', c.title ?? '', c.status, ...c.emails.flatMap((e) => [e.subject, stripHtml(e.body_html)])]);
+    for (const c of state.contacts) rows.push([c.email, c.first_name ?? '', c.last_name ?? '', c.company ?? '', c.title ?? '', c.status, ...c.emails.flatMap((e) => [e.subject, stripEmailHtml(e.body_html)])]);
     const csv = rows.map((r) => r.map((v) => `"${String(v).replaceAll('"','""')}"`).join(',')).join('\n');
     download(`${state.run.company_name}-review.csv`, csv, 'text/csv');
   }
@@ -136,6 +133,10 @@ export function ReviewApp({ initialState, token }: { initialState: ReviewState; 
     </aside>
 
     <section className="reviewMain">
+      {popup ? <div className="submissionPopup" role="status" aria-live="polite">
+        <div><strong>{popup}</strong><span>Your approval has been saved. The next step runs securely in the background.</span></div>
+        <button type="button" aria-label="Dismiss submission message" onClick={() => setPopup(null)}>×</button>
+      </div> : null}
       <div className="pageHeader">
         <div>
           <span className="badge activeBadge">Active review</span>
@@ -223,12 +224,19 @@ export function ReviewApp({ initialState, token }: { initialState: ReviewState; 
               <div className="emailGrid">
                 <div className="emailEditor">
                   <label>Subject<input value={email.subject} onChange={(e) => updateEmail(selected.id, email.step_number, { subject: e.target.value })} /></label>
-                  <label>Body HTML<textarea rows={9} value={email.body_html} onChange={(e) => updateEmail(selected.id, email.step_number, { body_html: e.target.value })} /></label>
+                  <label>Body text<textarea rows={9} value={email.body_text} onChange={(e) => updateEmail(selected.id, email.step_number, { body_text: e.target.value, body_html: editableTextToHtml(e.target.value) })} /></label>
                 </div>
                 <div className="previewPane">
                   <div className="sectionEyebrow">Rendered preview</div>
-                  <h4>{email.subject}</h4>
-                  <p>{stripHtml(email.body_html)}</p>
+                  <div className="emailPreviewFrame">
+                    <div className="emailPreviewMeta">
+                      <span>Subject</span>
+                      <strong>{email.subject}</strong>
+                    </div>
+                    <div className="emailPreviewBody">
+                      {emailParagraphs(email.body_html).map((paragraph, index) => <p key={index}>{paragraph}</p>)}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>)}

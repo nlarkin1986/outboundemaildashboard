@@ -49,7 +49,12 @@ a{color:inherit;text-decoration:none}
 .sidebarNote{margin-top:24px;border:1px solid var(--gladly-gray-200);border-radius:var(--radius-lg);padding:14px;background:var(--gladly-gray-100);display:grid;gap:6px}
 .sidebarNote strong{font-size:13px;color:#111827;font-weight:600}
 .sidebarNote span{font-size:12px;line-height:1.45;color:var(--gladly-gray-500)}
-.reviewMain{background:var(--gladly-white);min-height:calc(100vh - 56px);padding:32px 40px}
+.reviewMain{background:var(--gladly-white);min-height:calc(100vh - 56px);padding:32px 40px;position:relative}
+.submissionPopup{position:sticky;top:72px;z-index:25;margin:0 0 18px auto;max-width:460px;background:var(--gladly-white);border:1px solid var(--gladly-green);border-left:4px solid var(--gladly-green);border-radius:var(--radius-lg);box-shadow:0 12px 28px rgba(17,24,39,.12);padding:14px 14px 14px 16px;display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+.submissionPopup strong{display:block;font-size:14px;font-weight:600;color:#111827;margin-bottom:3px}
+.submissionPopup span{display:block;font-size:13px;line-height:1.4;color:var(--gladly-gray-500)}
+.submissionPopup button{border:0;background:transparent;color:var(--gladly-gray-500);font-size:22px;line-height:1;padding:0 2px}
+.submissionPopup button:hover{color:#111827}
 .pageHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin-bottom:24px}
 .pageHeader h1{font-size:24px;line-height:1.2;margin:10px 0 6px;font-weight:700;color:#111827}
 .pageHeader p{font-size:14px;line-height:1.5;color:var(--gladly-gray-500);margin:0;max-width:720px}
@@ -112,7 +117,7 @@ a{color:inherit;text-decoration:none}
 .evidenceCard{padding:20px}
 .fieldGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:18px}
 label{display:grid;gap:6px;font-size:14px;font-weight:500;color:var(--gladly-gray-700)}
-input,textarea{width:100%;border:1px solid var(--gladly-gray-300);border-radius:var(--radius-md);background:var(--gladly-white);color:#111827;padding:8px 12px;font-size:14px;line-height:1.5}
+input,textarea{width:100%;border:1px solid var(--gladly-gray-300);border-radius:var(--radius-md);background:var(--gladly-white);color:#111827;padding:8px 12px;font-size:14px;font-weight:400;line-height:1.5}
 textarea{resize:vertical;min-height:96px}
 .okCallout,.warningCallout{margin-top:16px;border-radius:var(--radius-md);padding:12px 14px;font-size:14px;line-height:1.45}
 .okCallout{background:var(--gladly-park-light);border:1px solid var(--gladly-park-light);color:var(--gladly-wood)}
@@ -123,10 +128,15 @@ textarea{resize:vertical;min-height:96px}
 .emailHeader h3{font-size:16px;line-height:1.35;max-width:760px}
 .emailGrid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(300px,.95fr);gap:18px;align-items:start}
 .emailEditor{display:grid;gap:14px}
-.emailEditor textarea{min-height:210px;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono",monospace;font-size:13px;line-height:1.55}
+.emailEditor textarea{min-height:210px;padding:14px;font-size:14px;font-weight:400;line-height:1.7}
 .previewPane{background:var(--gladly-gray-100);border:1px solid var(--gladly-gray-200);border-radius:var(--radius-lg);padding:18px;min-height:220px}
-.previewPane h4{font-size:18px;font-weight:600;line-height:1.35;color:#111827;margin:0 0 12px}
-.previewPane p{font-size:14px;line-height:1.65;color:var(--gladly-gray-700);margin:0;white-space:pre-wrap}
+.emailPreviewFrame{margin-top:10px;background:var(--gladly-white);border:1px solid var(--gladly-gray-200);border-radius:var(--radius-lg);box-shadow:0 1px 2px rgba(17,24,39,.04);overflow:hidden}
+.emailPreviewMeta{display:grid;gap:4px;padding:14px 18px;border-bottom:1px solid var(--gladly-gray-200);background:linear-gradient(180deg,#ffffff 0%,#FAFAFA 100%)}
+.emailPreviewMeta span{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--gladly-gray-500)}
+.emailPreviewMeta strong{font-size:16px;line-height:1.4;font-weight:600;color:#111827}
+.emailPreviewBody{padding:22px 24px 24px;color:#111827;font-size:15px;line-height:1.65;max-width:680px}
+.emailPreviewBody p{margin:0 0 16px;color:var(--gladly-gray-700);white-space:pre-line}
+.emailPreviewBody p:last-child{margin-bottom:0}
 
 @media (max-width:1100px){
   .reviewShell{padding-left:0}

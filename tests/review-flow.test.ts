@@ -23,4 +23,19 @@ describe('review flow', () => {
     expect(submitted.approved_count).toBe(1);
     expect(submitted.push_job_id).toBeTruthy();
   });
+
+  it('allows a submitted review to be submitted again without creating a duplicate push job', async () => {
+    const run = await createRun({ company_name: 'Repeat Submit Co', domain: 'repeatsubmit.example', mode: 'fast', source: 'manual', contacts: [{ first_name: 'Alex', last_name: 'Morgan', company: 'Repeat Submit Co', email: 'alex@example.com' }] });
+    await generateDraftForRun(run.id);
+    const state = await getReviewStateByToken(run.review_token);
+    state.contacts[0].status = 'approved';
+    await saveReviewState(run.review_token, { contacts: state.contacts }, 'reviewer@example.com');
+
+    const firstSubmit = await submitApproved(run.review_token, 'reviewer@example.com');
+    const secondSubmit = await submitApproved(run.review_token, 'reviewer@example.com');
+
+    expect(secondSubmit.approved_count).toBe(1);
+    expect(secondSubmit.push_job_id).toBe(firstSubmit.push_job_id);
+    expect(secondSubmit.status).toBe('queued_for_push');
+  });
 });

@@ -1,14 +1,10 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { editableTextToHtml, emailParagraphs, stripEmailHtml } from '@/lib/email-format';
+import { normalizeBatchReviewStateForEditing } from '@/lib/review-editor-state';
+import { nextBatchSelection } from '@/lib/review-navigation';
 import type { BatchReviewState, ReviewContact } from '@/lib/types';
-
-function stripHtml(html: string) {
-  if (typeof document === 'undefined') return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-  const el = document.createElement('div');
-  el.innerHTML = html;
-  return (el.textContent || el.innerText || '').replace(/\s+/g, ' ').trim();
-}
 
 function statusLabel(status: ReviewContact['status']) {
   if (status === 'needs_edit') return 'Needs edit';
@@ -16,11 +12,18 @@ function statusLabel(status: ReviewContact['status']) {
   return 'Skipped';
 }
 
+function statusClass(status: ReviewContact['status']) {
+  if (status === 'approved') return 'approved';
+  if (status === 'skipped') return 'skipped';
+  return 'needsEdit';
+}
+
 export function BatchReviewApp({ initialState, token }: { initialState: BatchReviewState; token: string }) {
-  const [state, setState] = useState(initialState);
+  const [state, setState] = useState(() => normalizeBatchReviewStateForEditing(initialState));
   const firstContact = state.runs.flatMap((r) => r.review.contacts.map((c) => ({ runId: r.run_id, contactId: c.id }))).at(0);
   const [selected, setSelected] = useState(firstContact);
   const [message, setMessage] = useState('Review only. No Instantly push has been made from the browser.');
+  const [popup, setPopup] = useState<string | null>(null);
   const selectedRun = state.runs.find((r) => r.run_id === selected?.runId) ?? state.runs[0];
   const selectedContact = selectedRun?.review.contacts.find((c) => c.id === selected?.contactId) ?? selectedRun?.review.contacts[0];
 
@@ -46,7 +49,7 @@ export function BatchReviewApp({ initialState, token }: { initialState: BatchRev
     }));
   }
 
-  function updateEmail(runId: string, contactId: string, step: number, patch: { subject?: string; body_html?: string }) {
+  function updateEmail(runId: string, contactId: string, step: number, patch: { subject?: string; body_html?: string; body_text?: string }) {
     setState((current) => ({
       ...current,
       runs: current.runs.map((run) => run.run_id !== runId ? run : {
@@ -55,7 +58,7 @@ export function BatchReviewApp({ initialState, token }: { initialState: BatchRev
           ...run.review,
           contacts: run.review.contacts.map((contact) => contact.id !== contactId ? contact : {
             ...contact,
-            emails: contact.emails.map((email) => email.step_number === step ? { ...email, ...patch, body_text: patch.body_html ? stripHtml(patch.body_html) : email.body_text } : email),
+            emails: contact.emails.map((email) => email.step_number === step ? { ...email, ...patch, body_text: patch.body_text ?? (patch.body_html ? stripEmailHtml(patch.body_html) : email.body_text) } : email),
           }),
         },
       }),
@@ -75,6 +78,11 @@ export function BatchReviewApp({ initialState, token }: { initialState: BatchRev
     const res = await fetch(`/api/review/batch/${token}/submit`, { method: 'POST' });
     const body = await res.json();
     if (!res.ok) throw new Error(body.error ?? 'Submit failed');
+    const selections = state.runs.flatMap((run) => run.review.contacts.map((contact) => ({ runId: run.run_id, contactId: contact.id })));
+    const next = nextBatchSelection(selections, selected);
+    const advanced = next && selected && (next.runId !== selected.runId || next.contactId !== selected.contactId);
+    if (next) setSelected(next);
+    setPopup(advanced ? 'Sequence submitted. Moving to the next sequence.' : 'Sequence submitted. You are on the final sequence.');
     setMessage(body.message ?? `${body.approved_contacts} approved contacts queued for server-side Instantly push.`);
   }
 
@@ -94,7 +102,7 @@ export function BatchReviewApp({ initialState, token }: { initialState: BatchRev
 
   function exportCsv() {
     const rows = [['company','email','first_name','last_name','title','status','subject_1','body_1','subject_2','body_2','subject_3','body_3']];
-    for (const run of state.runs) for (const c of run.review.contacts) rows.push([run.company_name, c.email, c.first_name ?? '', c.last_name ?? '', c.title ?? '', c.status, ...c.emails.flatMap((e) => [e.subject, stripHtml(e.body_html)])]);
+    for (const run of state.runs) for (const c of run.review.contacts) rows.push([run.company_name, c.email, c.first_name ?? '', c.last_name ?? '', c.title ?? '', c.status, ...c.emails.flatMap((e) => [e.subject, stripEmailHtml(e.body_html)])]);
     download(`${state.batch.id}-review.csv`, rows.map((r) => r.map((v) => `"${String(v).replaceAll('"','""')}"`).join(',')).join('\n'), 'text/csv');
   }
 
@@ -119,6 +127,10 @@ export function BatchReviewApp({ initialState, token }: { initialState: BatchRev
     </aside>
 
     <section className="reviewMain">
+      {popup ? <div className="submissionPopup" role="status" aria-live="polite">
+        <div><strong>{popup}</strong><span>Your approval has been saved. The next step runs securely in the background.</span></div>
+        <button type="button" aria-label="Dismiss submission message" onClick={() => setPopup(null)}>×</button>
+      </div> : null}
       <div className="pageHeader">
         <div><span className="badge activeBadge">{state.batch.status}</span><h1>Outbound batch</h1><p>{message}</p></div>
         <div className="pageActions" id="submit">
@@ -152,7 +164,7 @@ export function BatchReviewApp({ initialState, token }: { initialState: BatchRev
         <section className="detailPanel">
           <div className="reviewCard selectedHeader">
             <div><div className="sectionEyebrow">Selected contact</div><h2>{selectedContact.first_name} {selectedContact.last_name}</h2><p>{selectedContact.title} · {selectedContact.email}</p></div>
-            <div className="statusButtons">{(['approved','needs_edit','skipped'] as const).map((status) => <button key={status} className={selectedContact.status === status ? 'active' : ''} onClick={() => updateContact(selectedRun.run_id, selectedContact.id, { status })}>{statusLabel(status)}</button>)}</div>
+            <div className="statusButtons">{(['approved','needs_edit','skipped'] as const).map((status) => <button key={status} className={selectedContact.status === status ? `active ${statusClass(status)}` : ''} onClick={() => updateContact(selectedRun.run_id, selectedContact.id, { status })}>{statusLabel(status)}</button>)}</div>
           </div>
           <div className="reviewCard evidenceCard">
             <div className="panelTitleRow"><div><div className="sectionEyebrow">Evidence and angle</div><h3>Review before approving</h3></div>{selectedContact.qa_warnings.length ? <span className="badge warningBadge">Warnings</span> : <span className="badge activeBadge">No QA warnings</span>}</div>
@@ -167,7 +179,7 @@ export function BatchReviewApp({ initialState, token }: { initialState: BatchRev
           <div className="emailStack">
             {selectedContact.emails.map((email) => <div className="reviewCard emailCard" key={email.id}>
               <div className="emailHeader"><div><div className="sectionEyebrow">Email {email.step_number}</div><h3>{email.subject}</h3></div><span className="badge neutralBadge">Draft</span></div>
-              <div className="emailGrid"><div className="emailEditor"><label>Subject<input value={email.subject} onChange={(e) => updateEmail(selectedRun.run_id, selectedContact.id, email.step_number, { subject: e.target.value })} /></label><label>Body HTML<textarea rows={9} value={email.body_html} onChange={(e) => updateEmail(selectedRun.run_id, selectedContact.id, email.step_number, { body_html: e.target.value })} /></label></div><div className="previewPane"><div className="sectionEyebrow">Rendered preview</div><h4>{email.subject}</h4><p>{stripHtml(email.body_html)}</p></div></div>
+              <div className="emailGrid"><div className="emailEditor"><label>Subject<input value={email.subject} onChange={(e) => updateEmail(selectedRun.run_id, selectedContact.id, email.step_number, { subject: e.target.value })} /></label><label>Body text<textarea rows={9} value={email.body_text} onChange={(e) => updateEmail(selectedRun.run_id, selectedContact.id, email.step_number, { body_text: e.target.value, body_html: editableTextToHtml(e.target.value) })} /></label></div><div className="previewPane"><div className="sectionEyebrow">Rendered preview</div><div className="emailPreviewFrame"><div className="emailPreviewMeta"><span>Subject</span><strong>{email.subject}</strong></div><div className="emailPreviewBody">{emailParagraphs(email.body_html).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div></div></div></div>
             </div>)}
           </div>
         </section>

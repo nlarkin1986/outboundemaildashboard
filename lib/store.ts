@@ -28,6 +28,7 @@ export function reviewUrlForRun(run: Run) {
 }
 
 export function createBatch(...args: Parameters<typeof memoryStore.createBatch>) { return store().createBatch(...args); }
+export function upsertUserFromCoworkActor(...args: Parameters<typeof memoryStore.upsertUserFromCoworkActor>) { return store().upsertUserFromCoworkActor(...args); }
 export function getBatchById(...args: Parameters<typeof memoryStore.getBatchById>) { return store().getBatchById(...args); }
 export function getBatchReviewByToken(...args: Parameters<typeof memoryStore.getBatchReviewByToken>) { return store().getBatchReviewByToken(...args); }
 export function listBatchRuns(...args: Parameters<typeof memoryStore.listBatchRuns>) { return store().listBatchRuns(...args); }

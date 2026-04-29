@@ -1,6 +1,35 @@
 export type RunStatus = 'queued' | 'researching' | 'writing' | 'ready_for_review' | 'review_submitted' | 'pushing' | 'pushed' | 'partially_failed' | 'failed';
 export type ContactStatus = 'needs_edit' | 'approved' | 'skipped';
 
+export type Account = {
+  id: string;
+  name?: string;
+  domain: string;
+  cowork_org_id?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CoworkActor = {
+  email: string;
+  name?: string;
+  cowork_user_id?: string;
+  cowork_org_id?: string;
+  cowork_thread_id?: string;
+};
+
+export type AppUser = {
+  id: string;
+  account_id: string;
+  email: string;
+  name?: string;
+  cowork_user_id?: string;
+  role: 'member' | 'admin' | string;
+  last_seen_at?: string;
+  created_at: string;
+  updated_at: string;
+};
+
 export type Run = {
   id: string;
   company_name: string;
@@ -8,6 +37,9 @@ export type Run = {
   status: RunStatus;
   mode: 'fast' | 'deep';
   source: 'cowork' | 'manual' | 'api';
+  account_id?: string;
+  created_by_user_id?: string;
+  created_by?: string;
   campaign_id?: string;
   cowork_thread_id?: string;
   review_token: string;
@@ -98,6 +130,8 @@ export type Batch = {
   source: 'cowork' | 'manual' | 'api';
   status: BatchStatus;
   requested_by?: string;
+  account_id?: string;
+  created_by_user_id?: string;
   cowork_thread_id?: string;
   campaign_id?: string;
   mode: 'fast' | 'deep';

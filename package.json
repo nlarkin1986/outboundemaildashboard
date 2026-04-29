@@ -6,7 +6,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "lint": "next lint",
+    "lint": "eslint . --max-warnings=0",
     "db:setup": "node scripts/setup-db.mjs",
     "db:smoke": "node scripts/smoke-db.mjs",
     "vercel:env:push": "node scripts/push-vercel-env.mjs .env.local production,preview,development"
@@ -28,6 +28,8 @@
     "@types/pg": "^8.20.0",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.4",
     "jsdom": "latest",
     "typescript": "latest",
     "vitest": "latest"

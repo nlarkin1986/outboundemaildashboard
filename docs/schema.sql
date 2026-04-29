@@ -1,6 +1,27 @@
 -- Production Postgres schema for the Cowork -> Vercel -> Instantly approval workflow.
 -- Safe to run repeatedly in a fresh or existing database.
 
+create table if not exists accounts (
+  id text primary key,
+  name text,
+  domain text not null unique,
+  cowork_org_id text unique,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists users (
+  id text primary key,
+  account_id text not null references accounts(id) on delete cascade,
+  email text not null unique,
+  name text,
+  cowork_user_id text unique,
+  role text not null default 'member',
+  last_seen_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists runs (
   id text primary key,
   company_name text not null,
@@ -9,6 +30,8 @@ create table if not exists runs (
   mode text not null default 'fast' check (mode in ('fast','deep')),
   source text not null check (source in ('cowork','manual','api')),
   created_by text,
+  account_id text references accounts(id),
+  created_by_user_id text references users(id),
   cowork_thread_id text,
   cowork_callback_url text,
   review_token_hash text unique,
@@ -93,10 +116,17 @@ create table if not exists pushed_contacts (
 );
 
 create index if not exists idx_contacts_run_id on contacts(run_id);
+create index if not exists idx_users_email on users(email);
+create index if not exists idx_users_account_id on users(account_id);
+create index if not exists idx_runs_account_id on runs(account_id);
+create index if not exists idx_runs_created_by_user_id on runs(created_by_user_id);
 create index if not exists idx_sequence_emails_contact_id on sequence_emails(contact_id);
 create index if not exists idx_review_events_run_id on review_events(run_id);
 create index if not exists idx_push_jobs_run_id on push_jobs(run_id);
 create index if not exists idx_pushed_contacts_run_id on pushed_contacts(run_id);
+
+alter table runs add column if not exists account_id text references accounts(id);
+alter table runs add column if not exists created_by_user_id text references users(id);
 
 
 create table if not exists batches (
@@ -104,6 +134,8 @@ create table if not exists batches (
   source text not null default 'cowork',
   status text not null check (status in ('queued','processing','ready_for_review','review_submitted','pushing','pushed','partially_failed','failed')),
   requested_by text,
+  account_id text references accounts(id),
+  created_by_user_id text references users(id),
   cowork_thread_id text,
   campaign_id text,
   mode text not null default 'fast' check (mode in ('fast','deep')),
@@ -114,6 +146,9 @@ create table if not exists batches (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table batches add column if not exists account_id text references accounts(id);
+alter table batches add column if not exists created_by_user_id text references users(id);
 
 create table if not exists batch_runs (
   batch_id text not null references batches(id) on delete cascade,
@@ -153,6 +188,8 @@ create table if not exists cowork_messages (
 );
 
 create index if not exists idx_batch_runs_batch_id on batch_runs(batch_id);
+create index if not exists idx_batches_account_id on batches(account_id);
+create index if not exists idx_batches_created_by_user_id on batches(created_by_user_id);
 create index if not exists idx_batch_runs_run_id on batch_runs(run_id);
 create index if not exists idx_research_artifacts_run_id on research_artifacts(run_id);
 create index if not exists idx_cowork_messages_batch_id on cowork_messages(batch_id);

@@ -27,6 +27,7 @@ describe('batch review flow', () => {
 
   it('saves edits and queues only approved supplied contacts on submit', async () => {
     const batch = await createBatch({
+      actor: { email: 'nate@example.com' },
       requested_by: 'nate@example.com',
       cowork_thread_id: 'cowork-thread-123',
       campaign_id: 'campaign-1',
@@ -54,5 +55,11 @@ describe('batch review flow', () => {
     const submitted = await submitBatchReview(batch.review_token, 'reviewer@example.com');
     expect(submitted.approved_contacts).toBe(1);
     expect(submitted.status).toBe('review_submitted');
+
+    const finalState = await getBatchReviewByToken(batch.review_token);
+    expect(finalState.batch.account_id).toBe(batch.account_id);
+    expect(finalState.batch.created_by_user_id).toBe(batch.created_by_user_id);
+    expect(finalState.runs[0].review.run.account_id).toBe(batch.account_id);
+    expect(finalState.runs[0].review.run.created_by_user_id).toBe(batch.created_by_user_id);
   });
 });

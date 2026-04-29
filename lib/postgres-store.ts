@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { createBatchSchema, createRunSchema, saveBatchReviewSchema, saveReviewSchema, type CreateBatchInput, type CreateRunInput, type SaveBatchReviewInput, type SaveReviewInput } from './schemas';
 import { query, transaction, iso } from './db';
-import type { Batch, BatchReviewState, BatchRun, Contact, CoworkMessage, InstantlyPushPayload, ResearchArtifact, ReviewContact, ReviewEvent, ReviewState, Run, SequenceEmail } from './types';
+import type { Batch, BatchReviewState, BatchRun, Contact, CoworkMessage, InstantlyPushPayload, ResearchArtifact, ReviewContact, ReviewEvent, ReviewState, Run, SequenceEmail, Account, AppUser, CoworkActor } from './types';
 
 const now = () => new Date().toISOString();
 const id = (prefix: string) => `${prefix}_${crypto.randomUUID()}`;
@@ -21,6 +21,9 @@ function toRun(row: any, review_token = ''): Run {
     status: row.status,
     mode: row.mode,
     source: row.source,
+    account_id: row.account_id ?? undefined,
+    created_by_user_id: row.created_by_user_id ?? undefined,
+    created_by: row.created_by ?? undefined,
     campaign_id: row.campaign_id ?? undefined,
     cowork_thread_id: row.cowork_thread_id ?? undefined,
     review_token,
@@ -94,7 +97,47 @@ async function insertEvent(client: PoolClient, event: Omit<ReviewEvent, 'id' | '
 }
 
 export async function resetStore() {
-  await query('truncate table cowork_messages, research_artifacts, batch_runs, batches, pushed_contacts, push_jobs, review_events, sequence_emails, contacts, runs restart identity cascade');
+  await query('truncate table cowork_messages, research_artifacts, batch_runs, batches, pushed_contacts, push_jobs, review_events, sequence_emails, contacts, runs, users, accounts restart identity cascade');
+}
+
+function normalizeActorEmail(email?: string) {
+  const normalized = email?.trim().toLowerCase();
+  if (!normalized || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) throw new Error('A valid actor email is required');
+  return normalized;
+}
+
+function accountDomainFromEmail(email: string) { return email.split('@')[1]; }
+
+function toAccount(row: any): Account {
+  return { id: row.id, name: row.name ?? undefined, domain: row.domain, cowork_org_id: row.cowork_org_id ?? undefined, created_at: iso(row.created_at)!, updated_at: iso(row.updated_at)! };
+}
+
+function toAppUser(row: any): AppUser {
+  return { id: row.id, account_id: row.account_id, email: row.email, name: row.name ?? undefined, cowork_user_id: row.cowork_user_id ?? undefined, role: row.role, last_seen_at: iso(row.last_seen_at), created_at: iso(row.created_at)!, updated_at: iso(row.updated_at)! };
+}
+
+export async function upsertUserFromCoworkActor(actor: CoworkActor): Promise<{ account: Account; user: AppUser }> {
+  const email = normalizeActorEmail(actor.email);
+  const domain = accountDomainFromEmail(email);
+  const timestamp = now();
+  return transaction(async (client) => {
+    const accountResult = await client.query(
+      `insert into accounts (id, name, domain, cowork_org_id, created_at, updated_at)
+       values ($1,$2,$3,$4,$5,$5)
+       on conflict (domain) do update set updated_at=excluded.updated_at, cowork_org_id=coalesce(accounts.cowork_org_id, excluded.cowork_org_id)
+       returning *`,
+      [id('account'), domain, domain, actor.cowork_org_id ?? null, timestamp],
+    );
+    const account = toAccount(accountResult.rows[0]);
+    const userResult = await client.query(
+      `insert into users (id, account_id, email, name, cowork_user_id, role, last_seen_at, created_at, updated_at)
+       values ($1,$2,$3,$4,$5,'member',$6,$6,$6)
+       on conflict (email) do update set account_id=excluded.account_id, name=coalesce(excluded.name, users.name), cowork_user_id=coalesce(excluded.cowork_user_id, users.cowork_user_id), last_seen_at=excluded.last_seen_at, updated_at=excluded.updated_at
+       returning *`,
+      [id('user'), account.id, email, actor.name ?? null, actor.cowork_user_id ?? null, timestamp],
+    );
+    return { account, user: toAppUser(userResult.rows[0]) };
+  });
 }
 
 export async function createRun(input: CreateRunInput): Promise<Run & { contacts: Contact[] }> {
@@ -107,9 +150,9 @@ export async function createRun(input: CreateRunInput): Promise<Run & { contacts
 
   return transaction(async (client) => {
     const runResult = await client.query(
-      `insert into runs (id, company_name, domain, status, mode, source, campaign_id, cowork_thread_id, review_token_hash, created_at, updated_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10) returning *`,
-      [runId, data.company_name, data.domain ?? null, 'queued', data.mode, data.source, data.campaign_id ?? null, data.cowork_thread_id ?? null, tokenHash(token), timestamp],
+      `insert into runs (id, company_name, domain, status, mode, source, created_by, account_id, created_by_user_id, campaign_id, cowork_thread_id, review_token_hash, created_at, updated_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13) returning *`,
+      [runId, data.company_name, data.domain ?? null, 'queued', data.mode, data.source, data.created_by ?? null, data.account_id ?? null, data.created_by_user_id ?? null, data.campaign_id ?? null, data.cowork_thread_id ?? null, tokenHash(token), timestamp],
     );
     const contacts: Contact[] = [];
     const seen = new Set<string>();
@@ -239,16 +282,22 @@ export async function submitApproved(token: string, actor = 'anonymous'): Promis
   const approved = state.contacts.filter((c) => c.status === 'approved');
   if (approved.length === 0) throw new Error('At least one approved contact is required before submit');
   const timestamp = now();
+  const idempotencyKey = `push:${state.run.id}`;
   return transaction(async (client) => {
     await client.query(`update runs set status='review_submitted', updated_at=$2 where id=$1`, [state.run.id, timestamp]);
     const jobId = id('push');
-    await client.query(
+    const jobResult = await client.query(
       `insert into push_jobs (id, run_id, status, instantly_campaign_id, idempotency_key, attempts, created_at, updated_at)
-       values ($1,$2,'queued',$3,$4,0,$5,$5)`,
-      [jobId, state.run.id, state.run.campaign_id ?? null, `push:${state.run.id}`, timestamp],
+       values ($1,$2,'queued',$3,$4,0,$5,$5)
+       on conflict (idempotency_key) do update set updated_at=push_jobs.updated_at
+       returning id`,
+      [jobId, state.run.id, state.run.campaign_id ?? null, idempotencyKey, timestamp],
     );
-    await insertEvent(client, { run_id: state.run.id, actor, event_type: 'review_submitted', after_json: { approved_count: approved.length, push_job_id: jobId }, created_at: timestamp });
-    return { ok: true, approved_count: approved.length, push_job_id: jobId, status: 'queued_for_push' };
+    const pushJobId = jobResult.rows[0].id;
+    if (pushJobId === jobId) {
+      await insertEvent(client, { run_id: state.run.id, actor, event_type: 'review_submitted', after_json: { approved_count: approved.length, push_job_id: pushJobId }, created_at: timestamp });
+    }
+    return { ok: true, approved_count: approved.length, push_job_id: pushJobId, status: 'queued_for_push' };
   });
 }
 
@@ -300,6 +349,8 @@ function toBatch(row: any, review_token = ''): Batch & { companies: Array<{ comp
     source: row.source,
     status: row.status,
     requested_by: row.requested_by ?? undefined,
+    account_id: row.account_id ?? undefined,
+    created_by_user_id: row.created_by_user_id ?? undefined,
     cowork_thread_id: row.cowork_thread_id ?? undefined,
     campaign_id: row.campaign_id ?? undefined,
     mode: row.mode,
@@ -320,13 +371,20 @@ export async function createBatch(input: CreateBatchInput): Promise<Batch & { co
   const parsed = createBatchSchema.safeParse(input);
   if (!parsed.success) throw new Error(`Invalid batch payload: ${parsed.error.message}`);
   const data = parsed.data;
+  const actor = data.actor ?? [data.user_email, data.requested_by_email, data.actor_email, data.created_by_email, data.requested_by]
+    .map((email) => {
+      try { return email ? { email: normalizeActorEmail(email) } : null; } catch { return null; }
+    })
+    .find(Boolean) ?? undefined;
+  const owner = actor ? await upsertUserFromCoworkActor(actor) : null;
+  const ownerEmail = owner?.user.email ?? data.requested_by ?? data.requested_by_email ?? data.user_email ?? data.actor_email ?? data.created_by_email;
   const token = reviewToken();
   const timestamp = now();
   const reviewUrl = reviewUrlForBatchTokenLocal(token);
   const result = await query(
-    `insert into batches (id, source, status, requested_by, cowork_thread_id, campaign_id, mode, review_token_hash, review_url, companies_json, created_at, updated_at)
-     values ($1,$2,'queued',$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$10) returning *`,
-    [id('batch'), data.source, data.requested_by ?? null, data.cowork_thread_id ?? null, data.campaign_id ?? null, data.mode, tokenHash(token), reviewUrl, JSON.stringify(data.companies), timestamp],
+    `insert into batches (id, source, status, requested_by, account_id, created_by_user_id, cowork_thread_id, campaign_id, mode, review_token_hash, review_url, companies_json, created_at, updated_at)
+     values ($1,$2,'queued',$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$12) returning *`,
+    [id('batch'), data.source, ownerEmail ?? null, owner?.account.id ?? null, owner?.user.id ?? null, data.cowork_thread_id ?? null, data.campaign_id ?? null, data.mode, tokenHash(token), reviewUrl, JSON.stringify(data.companies), timestamp],
   );
   return clone(toBatch(result.rows[0], token));
 }

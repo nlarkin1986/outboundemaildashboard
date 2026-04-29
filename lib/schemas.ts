@@ -9,11 +9,22 @@ export const contactInputSchema = z.object({
   domain: z.string().optional(),
 });
 
+const coworkActorSchema = z.object({
+  email: z.string().trim().toLowerCase().email(),
+  name: z.string().optional(),
+  cowork_user_id: z.string().optional(),
+  cowork_org_id: z.string().optional(),
+  cowork_thread_id: z.string().optional(),
+});
+
 export const createRunSchema = z.object({
   company_name: z.string().min(1),
   domain: z.string().optional(),
   mode: z.enum(['fast', 'deep']).default('fast'),
   source: z.enum(['cowork', 'manual', 'api']).default('api'),
+  account_id: z.string().optional(),
+  created_by_user_id: z.string().optional(),
+  created_by: z.string().optional(),
   campaign_id: z.string().optional(),
   cowork_thread_id: z.string().optional(),
   contacts: z.array(contactInputSchema).min(1),
@@ -56,7 +67,12 @@ export const companyInputSchema = z.object({
 });
 
 export const createBatchSchema = z.object({
+  actor: coworkActorSchema.optional(),
   requested_by: z.string().optional(),
+  requested_by_email: z.string().optional(),
+  user_email: z.string().optional(),
+  actor_email: z.string().optional(),
+  created_by_email: z.string().optional(),
   cowork_thread_id: z.string().optional(),
   campaign_id: z.string().optional(),
   mode: z.enum(['fast', 'deep']).default('fast'),

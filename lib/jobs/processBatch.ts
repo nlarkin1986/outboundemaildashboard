@@ -36,6 +36,9 @@ export async function processBatch(batchId: string) {
         cowork_thread_id: batch.cowork_thread_id,
         mode: batch.mode,
         source: 'cowork',
+        account_id: batch.account_id,
+        created_by_user_id: batch.created_by_user_id,
+        created_by: batch.requested_by,
       });
       runId = run.id;
       await attachRunToBatch(batchId, run.id, company, 'researching');
@@ -76,7 +79,12 @@ export async function processBatch(batchId: string) {
 
   await updateBatchStatus(batchId, failures ? 'partially_failed' : 'ready_for_review');
   const reviewUrl = batch.review_url || reviewUrlForBatchToken(batch.review_token);
-  const message = await postCoworkBatchReady({ batchId, threadId: batch.cowork_thread_id, reviewUrl });
-  await recordCoworkMessage({ batch_id: batchId, thread_id: batch.cowork_thread_id, direction: 'outbound', status: message.status, payload: { text: `Your outbound dashboard is ready: ${reviewUrl}`, review_url: reviewUrl }, response: message.response, error: message.error });
+  let message;
+  try {
+    message = await postCoworkBatchReady({ batchId, threadId: batch.cowork_thread_id, reviewUrl });
+  } catch (error) {
+    message = { status: 'failed' as const, error: error instanceof Error ? error.message : String(error) };
+  }
+  await recordCoworkMessage({ batch_id: batchId, thread_id: batch.cowork_thread_id, direction: 'outbound', status: message.status, payload: { text: `Your outbound dashboard is ready: ${reviewUrl}`, review_url: reviewUrl, account_id: batch.account_id, created_by_user_id: batch.created_by_user_id, created_by: batch.requested_by }, response: message.response, error: message.error });
   return { ok: true as const, batch_id: batchId, status: failures ? 'partially_failed' : 'ready_for_review', review_url: reviewUrl, failures };
 }

@@ -1,8 +1,10 @@
 import crypto from 'node:crypto';
 import { createBatchSchema, createRunSchema, saveBatchReviewSchema, saveReviewSchema, type CreateBatchInput, type CreateRunInput, type SaveBatchReviewInput, type SaveReviewInput } from './schemas';
-import type { Batch, BatchReviewState, BatchRun, Contact, CoworkMessage, InstantlyPushPayload, PushJob, ResearchArtifact, ReviewContact, ReviewEvent, ReviewState, Run, SequenceEmail } from './types';
+import type { Batch, BatchReviewState, BatchRun, Contact, CoworkMessage, InstantlyPushPayload, PushJob, ResearchArtifact, ReviewContact, ReviewEvent, ReviewState, Run, SequenceEmail, Account, AppUser, CoworkActor } from './types';
 
 type Db = {
+  accounts: Map<string, Account>;
+  users: Map<string, AppUser>;
   runs: Map<string, Run>;
   contacts: Map<string, Contact>;
   emails: Map<string, SequenceEmail>;
@@ -18,7 +20,7 @@ type Db = {
 const globalForStore = globalThis as unknown as { __outboundStore?: Db };
 
 function newDb(): Db {
-  return { runs: new Map(), contacts: new Map(), emails: new Map(), events: [], pushJobs: new Map(), pushedContacts: new Set(), batches: new Map(), batchRuns: new Map(), researchArtifacts: new Map(), coworkMessages: new Map() };
+  return { accounts: new Map(), users: new Map(), runs: new Map(), contacts: new Map(), emails: new Map(), events: [], pushJobs: new Map(), pushedContacts: new Set(), batches: new Map(), batchRuns: new Map(), researchArtifacts: new Map(), coworkMessages: new Map() };
 }
 
 const db = globalForStore.__outboundStore ?? newDb();
@@ -29,6 +31,8 @@ const id = (prefix: string) => `${prefix}_${crypto.randomUUID()}`;
 const reviewToken = () => crypto.randomBytes(32).toString('hex');
 
 export function resetStore() {
+  db.accounts.clear();
+  db.users.clear();
   db.runs.clear();
   db.contacts.clear();
   db.emails.clear();
@@ -49,6 +53,42 @@ function getRunOrThrow(runId: string) {
   const run = db.runs.get(runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
   return run;
+}
+
+function normalizeActorEmail(email?: string) {
+  const normalized = email?.trim().toLowerCase();
+  if (!normalized || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) throw new Error('A valid actor email is required');
+  return normalized;
+}
+
+function accountDomainFromEmail(email: string) {
+  return email.split('@')[1];
+}
+
+export async function upsertUserFromCoworkActor(actor: CoworkActor): Promise<{ account: Account; user: AppUser }> {
+  const email = normalizeActorEmail(actor.email);
+  const domain = accountDomainFromEmail(email);
+  const timestamp = now();
+  let account = [...db.accounts.values()].find((candidate) => candidate.domain === domain || (actor.cowork_org_id && candidate.cowork_org_id === actor.cowork_org_id));
+  if (!account) {
+    account = { id: id('account'), name: domain, domain, cowork_org_id: actor.cowork_org_id, created_at: timestamp, updated_at: timestamp };
+    db.accounts.set(account.id, account);
+  } else {
+    account.updated_at = timestamp;
+    if (actor.cowork_org_id && !account.cowork_org_id) account.cowork_org_id = actor.cowork_org_id;
+  }
+  let user = [...db.users.values()].find((candidate) => candidate.email === email);
+  if (!user) {
+    user = { id: id('user'), account_id: account.id, email, name: actor.name, cowork_user_id: actor.cowork_user_id, role: 'member', last_seen_at: timestamp, created_at: timestamp, updated_at: timestamp };
+    db.users.set(user.id, user);
+  } else {
+    user.account_id = account.id;
+    user.name = actor.name ?? user.name;
+    user.cowork_user_id = actor.cowork_user_id ?? user.cowork_user_id;
+    user.last_seen_at = timestamp;
+    user.updated_at = timestamp;
+  }
+  return clone({ account, user });
 }
 
 function contactsForRun(runId: string): Contact[] {
@@ -72,6 +112,9 @@ export async function createRun(input: CreateRunInput): Promise<Run & { contacts
     status: 'queued',
     mode: data.mode,
     source: data.source,
+    account_id: data.account_id,
+    created_by_user_id: data.created_by_user_id,
+    created_by: data.created_by,
     campaign_id: data.campaign_id,
     cowork_thread_id: data.cowork_thread_id,
     review_token: reviewToken(),
@@ -194,9 +237,14 @@ export async function submitApproved(token: string, actor = 'anonymous'): Promis
   if (approved.length === 0) throw new Error('At least one approved contact is required before submit');
   const timestamp = now();
   const run = getRunOrThrow(state.run.id);
+  const idempotencyKey = `push:${run.id}`;
+  const existingJob = [...db.pushJobs.values()].find((job) => job.idempotency_key === idempotencyKey);
+  if (existingJob) {
+    return { ok: true, approved_count: approved.length, push_job_id: existingJob.id, status: 'queued_for_push' };
+  }
   run.status = 'review_submitted';
   run.updated_at = timestamp;
-  const job: PushJob = { id: id('push'), run_id: run.id, status: 'queued', instantly_campaign_id: run.campaign_id, idempotency_key: `push:${run.id}`, attempts: 0, created_at: timestamp, updated_at: timestamp };
+  const job: PushJob = { id: id('push'), run_id: run.id, status: 'queued', instantly_campaign_id: run.campaign_id, idempotency_key: idempotencyKey, attempts: 0, created_at: timestamp, updated_at: timestamp };
   db.pushJobs.set(job.id, job);
   db.events.push({ id: id('event'), run_id: run.id, actor, event_type: 'review_submitted', after_json: { approved_count: approved.length, push_job_id: job.id }, created_at: timestamp });
   return { ok: true, approved_count: approved.length, push_job_id: job.id, status: 'queued_for_push' };
@@ -244,13 +292,22 @@ export async function createBatch(input: CreateBatchInput): Promise<Batch & { co
   const parsed = createBatchSchema.safeParse(input);
   if (!parsed.success) throw new Error(`Invalid batch payload: ${parsed.error.message}`);
   const data = parsed.data;
+  const actor = data.actor ?? [data.user_email, data.requested_by_email, data.actor_email, data.created_by_email, data.requested_by]
+    .map((email) => {
+      try { return email ? { email: normalizeActorEmail(email) } : null; } catch { return null; }
+    })
+    .find(Boolean) ?? undefined;
+  const owner = actor ? await upsertUserFromCoworkActor(actor) : null;
+  const ownerEmail = owner?.user.email ?? data.requested_by ?? data.requested_by_email ?? data.user_email ?? data.actor_email ?? data.created_by_email;
   const timestamp = now();
   const token = tokenForBatch();
   const batch: Batch & { companies: Array<{ company_name: string; domain?: string; contacts?: any[] }> } = {
     id: id('batch'),
     source: data.source,
     status: 'queued',
-    requested_by: data.requested_by,
+    requested_by: ownerEmail,
+    account_id: owner?.account.id,
+    created_by_user_id: owner?.user.id,
     cowork_thread_id: data.cowork_thread_id,
     campaign_id: data.campaign_id,
     mode: data.mode,
