@@ -29,6 +29,8 @@ create table if not exists runs (
   status text not null check (status in ('queued','researching','writing','ready_for_review','review_submitted','pushing','pushed','partially_failed','failed')),
   mode text not null default 'fast' check (mode in ('fast','deep')),
   source text not null check (source in ('cowork','manual','api')),
+  play_id text,
+  play_metadata_json jsonb not null default '{}',
   created_by text,
   account_id text references accounts(id),
   created_by_user_id text references users(id),
@@ -55,6 +57,8 @@ create table if not exists contacts (
   opening_hook text,
   proof_used text,
   guardrail text,
+  sequence_code text,
+  play_metadata_json jsonb not null default '{}',
   evidence_json jsonb not null default '[]',
   qa_warnings_json jsonb not null default '[]',
   created_at timestamptz not null default now(),
@@ -66,6 +70,8 @@ create table if not exists sequence_emails (
   id text primary key,
   contact_id text not null references contacts(id) on delete cascade,
   step_number int not null check (step_number in (1,2,3)),
+  original_step_number int,
+  step_label text,
   subject text not null,
   body_html text not null,
   body_text text,
@@ -117,6 +123,14 @@ create table if not exists pushed_contacts (
 
 alter table runs add column if not exists account_id text references accounts(id);
 alter table runs add column if not exists created_by_user_id text references users(id);
+alter table runs add column if not exists play_id text;
+alter table runs add column if not exists play_metadata_json jsonb not null default '{}';
+alter table contacts add column if not exists sequence_code text;
+alter table contacts add column if not exists play_metadata_json jsonb not null default '{}';
+alter table sequence_emails add column if not exists original_step_number int;
+alter table sequence_emails add column if not exists step_label text;
+alter table sequence_emails drop constraint if exists sequence_emails_step_number_check;
+alter table sequence_emails add constraint sequence_emails_step_number_check check (step_number > 0);
 
 create index if not exists idx_contacts_run_id on contacts(run_id);
 create index if not exists idx_users_email on users(email);
@@ -132,6 +146,8 @@ create table if not exists batches (
   id text primary key,
   source text not null default 'cowork',
   status text not null check (status in ('queued','processing','ready_for_review','review_submitted','pushing','pushed','partially_failed','failed')),
+  play_id text,
+  play_metadata_json jsonb not null default '{}',
   requested_by text,
   account_id text references accounts(id),
   created_by_user_id text references users(id),
@@ -148,10 +164,13 @@ create table if not exists batches (
 
 alter table batches add column if not exists account_id text references accounts(id);
 alter table batches add column if not exists created_by_user_id text references users(id);
+alter table batches add column if not exists play_id text;
+alter table batches add column if not exists play_metadata_json jsonb not null default '{}';
 
 create table if not exists batch_runs (
   batch_id text not null references batches(id) on delete cascade,
   run_id text not null references runs(id) on delete cascade,
+  company_key text,
   company_name text not null,
   domain text,
   status text not null check (status in ('queued','researching','writing','ready_for_review','failed')),
@@ -160,6 +179,8 @@ create table if not exists batch_runs (
   updated_at timestamptz not null default now(),
   primary key (batch_id, run_id)
 );
+
+alter table batch_runs add column if not exists company_key text;
 
 create table if not exists research_artifacts (
   id text primary key,
@@ -187,6 +208,7 @@ create table if not exists cowork_messages (
 );
 
 create index if not exists idx_batch_runs_batch_id on batch_runs(batch_id);
+create unique index if not exists idx_batch_runs_batch_company_key on batch_runs(batch_id, company_key) where company_key is not null;
 create index if not exists idx_batches_account_id on batches(account_id);
 create index if not exists idx_batches_created_by_user_id on batches(created_by_user_id);
 create index if not exists idx_batch_runs_run_id on batch_runs(run_id);

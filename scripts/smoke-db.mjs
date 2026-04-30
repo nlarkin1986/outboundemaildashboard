@@ -30,6 +30,26 @@ const requiredColumns = [
   ['runs', 'created_by_user_id'],
   ['batches', 'account_id'],
   ['batches', 'created_by_user_id'],
+  ['batch_runs', 'company_key'],
+];
+
+const requiredIndexes = [
+  'idx_contacts_run_id',
+  'idx_users_email',
+  'idx_users_account_id',
+  'idx_runs_account_id',
+  'idx_runs_created_by_user_id',
+  'idx_sequence_emails_contact_id',
+  'idx_review_events_run_id',
+  'idx_push_jobs_run_id',
+  'idx_pushed_contacts_run_id',
+  'idx_batch_runs_batch_id',
+  'idx_batch_runs_batch_company_key',
+  'idx_batches_account_id',
+  'idx_batches_created_by_user_id',
+  'idx_batch_runs_run_id',
+  'idx_research_artifacts_run_id',
+  'idx_cowork_messages_batch_id',
 ];
 
 const pool = new Pool({
@@ -63,13 +83,23 @@ try {
     .map(([table, column]) => `${table}.${column}`)
     .filter((columnKey) => !foundColumns.has(columnKey));
 
-  if (missingTables.length || missingColumns.length) {
-    console.error(JSON.stringify({ ok: false, missing_tables: missingTables, missing_columns: missingColumns }));
+  const indexesResult = await pool.query(
+    `select indexname
+     from pg_catalog.pg_indexes
+     where schemaname = 'public'
+       and indexname = any($1::text[])`,
+    [requiredIndexes],
+  );
+  const foundIndexes = new Set(indexesResult.rows.map((row) => row.indexname));
+  const missingIndexes = requiredIndexes.filter((index) => !foundIndexes.has(index));
+
+  if (missingTables.length || missingColumns.length || missingIndexes.length) {
+    console.error(JSON.stringify({ ok: false, missing_tables: missingTables, missing_columns: missingColumns, missing_indexes: missingIndexes }));
     process.exit(1);
   }
 
   const result = await pool.query('select count(*)::int as runs from runs');
-  console.log(JSON.stringify({ ok: true, runs: result.rows[0].runs, required_tables: requiredTables.length }));
+  console.log(JSON.stringify({ ok: true, runs: result.rows[0].runs, required_tables: requiredTables.length, required_indexes: requiredIndexes.length }));
 } finally {
   await pool.end();
 }

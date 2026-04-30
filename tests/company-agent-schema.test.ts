@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { companyAgentOutputSchema } from '@/lib/agent/schemas';
 
 describe('company agent output schema', () => {
-  it('rejects malformed email sequences', () => {
+  it('accepts variable-length reviewed email sequences', () => {
     const result = companyAgentOutputSchema.safeParse({
-      company_name: 'Bad Co',
+      company_name: 'Good Co',
       core_hypothesis: 'test',
       evidence_ledger: [],
       contacts: [{
         email: 'person@example.com',
-        company: 'Bad Co',
+        company: 'Good Co',
         primary_angle: 'angle',
         opening_hook: 'hook',
         proof_used: 'proof',
@@ -19,6 +19,6 @@ describe('company agent output schema', () => {
         ],
       }],
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
   });
 });

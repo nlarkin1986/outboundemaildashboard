@@ -22,6 +22,10 @@ function statusClass(status: ReviewContact['status']) {
   return 'needsEdit';
 }
 
+function emailDisplayLabel(email: ReviewContact['emails'][number]) {
+  return email.step_label ?? `Email ${email.step_number}`;
+}
+
 export function ReviewApp({ initialState, token }: { initialState: ReviewState; token: string }) {
   const [state, setState] = useState(() => normalizeReviewStateForEditing(initialState));
   const [selectedId, setSelectedId] = useState(initialState.contacts[0]?.id);
@@ -94,8 +98,16 @@ export function ReviewApp({ initialState, token }: { initialState: ReviewState; 
   }
 
   function exportCsv() {
-    const rows = [['email','first_name','last_name','company','title','status','subject_1','body_1','subject_2','body_2','subject_3','body_3']];
-    for (const c of state.contacts) rows.push([c.email, c.first_name ?? '', c.last_name ?? '', c.company ?? '', c.title ?? '', c.status, ...c.emails.flatMap((e) => [e.subject, stripEmailHtml(e.body_html)])]);
+    const maxEmails = Math.max(0, ...state.contacts.map((contact) => contact.emails.length));
+    const emailHeaders = Array.from({ length: maxEmails }, (_, index) => [`email_${index + 1}_label`, `subject_${index + 1}`, `body_${index + 1}`]).flat();
+    const rows = [['email','first_name','last_name','company','title','status','sequence_code',...emailHeaders]];
+    for (const c of state.contacts) {
+      const emailValues = Array.from({ length: maxEmails }, (_, index) => {
+        const email = c.emails[index];
+        return email ? [emailDisplayLabel(email), email.subject, stripEmailHtml(email.body_html)] : ['', '', ''];
+      }).flat();
+      rows.push([c.email, c.first_name ?? '', c.last_name ?? '', c.company ?? '', c.title ?? '', c.status, c.sequence_code ?? '', ...emailValues]);
+    }
     const csv = rows.map((r) => r.map((v) => `"${String(v).replaceAll('"','""')}"`).join(',')).join('\n');
     download(`${state.run.company_name}-review.csv`, csv, 'text/csv');
   }
@@ -218,7 +230,7 @@ export function ReviewApp({ initialState, token }: { initialState: ReviewState; 
           <div className="emailStack" id="emails">
             {selected.emails.map((email) => <div className="reviewCard emailCard" key={email.id}>
               <div className="emailHeader">
-                <div><div className="sectionEyebrow">Email {email.step_number}</div><h3>{email.subject}</h3></div>
+                <div><div className="sectionEyebrow">{emailDisplayLabel(email)}</div><h3>{email.subject}</h3></div>
                 <span className="badge neutralBadge">Draft</span>
               </div>
               <div className="emailGrid">

@@ -52,6 +52,8 @@ export function normalizeCoworkBatchPayload(body: any) {
     campaign_id: payload.campaign_id ?? payload.campaignId,
     mode: payload.mode ?? 'fast',
     source: 'cowork' as const,
+    play_id: payload.play_id ?? payload.playId,
+    play_metadata: payload.play_metadata ?? payload.playMetadata,
     target_persona: payload.target_persona ?? payload.targetPersona,
     companies: companies.map((company: any) => typeof company === 'string' ? { company_name: company } : {
       company_name: company.company_name ?? company.companyName ?? company.name,

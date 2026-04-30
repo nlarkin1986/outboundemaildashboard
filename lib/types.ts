@@ -37,6 +37,8 @@ export type Run = {
   status: RunStatus;
   mode: 'fast' | 'deep';
   source: 'cowork' | 'manual' | 'api';
+  play_id?: string;
+  play_metadata?: Record<string, unknown>;
   account_id?: string;
   created_by_user_id?: string;
   created_by?: string;
@@ -61,6 +63,8 @@ export type Contact = {
   opening_hook?: string;
   proof_used?: string;
   guardrail?: string;
+  sequence_code?: string;
+  play_metadata?: Record<string, unknown>;
   evidence_urls: string[];
   qa_warnings: string[];
 };
@@ -68,7 +72,9 @@ export type Contact = {
 export type SequenceEmail = {
   id: string;
   contact_id: string;
-  step_number: 1 | 2 | 3;
+  step_number: number;
+  original_step_number?: number;
+  step_label?: string;
   subject: string;
   body_html: string;
   body_text: string;
@@ -122,13 +128,15 @@ export type BatchRunStatus = 'queued' | 'researching' | 'writing' | 'ready_for_r
 export type CompanyInput = {
   company_name: string;
   domain?: string;
-  contacts?: import('./schemas').ContactInput[];
+  contacts?: import('./schemas').BatchContactInput[];
 };
 
 export type Batch = {
   id: string;
   source: 'cowork' | 'manual' | 'api';
   status: BatchStatus;
+  play_id?: string;
+  play_metadata?: Record<string, unknown>;
   requested_by?: string;
   account_id?: string;
   created_by_user_id?: string;
@@ -145,6 +153,7 @@ export type Batch = {
 export type BatchRun = {
   batch_id: string;
   run_id: string;
+  company_key?: string;
   company_name: string;
   domain?: string;
   status: BatchRunStatus;

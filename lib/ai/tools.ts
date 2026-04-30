@@ -96,6 +96,25 @@ export async function searchWithExa(companyName: string, domain?: string): Promi
     }));
 }
 
+export async function searchPublicWeb(query: string, domain?: string, numResults = 5): Promise<ResearchResult[]> {
+  const results = await exaSearch({
+    query,
+    numResults,
+    includeDomains: domain ? [domain] : undefined,
+    contents: { text: { maxCharacters: 1200 } },
+  });
+  if (results.length === 0) return [];
+  return results
+    .filter((result) => result.url)
+    .map((result) => ({
+      source_url: result.url!,
+      source_title: result.title,
+      quote_or_fact: cleanText(result.text) || cleanText(result.title) || `Public source found for ${query}.`,
+      evidence_type: 'public_fact' as const,
+      confidence: 'medium' as const,
+    }));
+}
+
 export async function findPeopleWithExa(companyName: string, domain?: string, targetPersona = 'customer experience OR customer support OR ecommerce operations'): Promise<PeopleResult[]> {
   const results = await exaSearch({
     query: `${companyName} ${domain ?? ''} ${targetPersona} leader director manager LinkedIn`,

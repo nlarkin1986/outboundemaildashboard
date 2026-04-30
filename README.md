@@ -115,6 +115,8 @@ EXA_API_KEY=...
 BROWSERBASE_API_KEY=...
 BROWSERBASE_PROJECT_ID=...
 INSTANTLY_API_KEY=...
+MCP_API_SECRET=...
+MCP_AUTH_DISABLED=false
 COWORK_API_BASE_URL=...
 COWORK_API_KEY=***
 COWORK_WEBHOOK_SECRET=***
@@ -125,9 +127,19 @@ After setting `DATABASE_URL`, run the schema once against production:
 
 ```bash
 npm run db:setup
+npm run db:smoke
 ```
 
 If using Vercel Postgres/Neon/Supabase, run that command from a machine with the same `DATABASE_URL`, or from Vercel's environment through your deployment workflow.
+
+## Production readiness checklist
+
+1. Provision Postgres and set `DATABASE_URL`, `DATABASE_SSL`, and `DATABASE_POOL_MAX`.
+2. Apply and verify schema with `npm run db:setup` and `npm run db:smoke`. The smoke check validates required tables, ownership columns, and readiness indexes.
+3. Push Vercel env with `npm run vercel:env:push`, then redeploy. Vercel env changes only affect new deployments.
+4. Confirm the deployed `/api/mcp` endpoint responds to `initialize`, `tools/list`, and `tools/call` with `MCP_API_SECRET` configured.
+5. Confirm Cowork can create a batch through MCP or `POST /api/webhooks/cowork/batch`, then poll `get_outbound_sequence_status` until `ready_for_review`.
+6. Confirm internal batch processing and push endpoints return `401` without `INTERNAL_API_SECRET` and process successfully with it.
 
 ## Push endpoints
 
@@ -171,6 +183,34 @@ curl -X POST "$APP_BASE_URL/api/webhooks/cowork/batch" \
 ```
 
 The response includes `batch_id`, `review_url`, and `process_url`. Company-only rows are allowed for account-level drafts, but they are intentionally not pushable until real contact emails are supplied.
+
+## BDR cold outbound play
+
+The first play-specific path uses `play_id: "bdr_cold_outbound"`. It reuses the same batch approval flow, but routes processing through the BDR play for retail/ecommerce account sequencing. The plugin or Cowork host should ask at most two follow-up turns before calling the tool: one to confirm the BDR play if intent is ambiguous, and one to collect missing company/domain/contact/title/campaign details.
+
+```bash
+curl -X POST "$APP_BASE_URL/api/mcp" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $MCP_API_SECRET" \
+  -d '{
+    "tool":"create_outbound_sequence",
+    "input":{
+      "actor":{"email":"bdr@example.com","cowork_thread_id":"thread-123"},
+      "play_id":"bdr_cold_outbound",
+      "campaign_id":"camp_test",
+      "companies":[{
+        "company_name":"Kizik",
+        "domain":"kizik.com",
+        "contacts":[
+          {"name":"Alex Morgan","title":"VP of Customer Experience","email":"alex@example.com"},
+          {"name":"Sam Lee","title":"Director of E-commerce"}
+        ]
+      }]
+    }
+  }'
+```
+
+BDR contacts without real emails are draftable but non-pushable. The review UI labels the generated manual drafts with their original play steps, usually Step 1 and Step 4. See `docs/bdr-play-intake.md` for the full plugin intake contract.
 
 ## Validation
 

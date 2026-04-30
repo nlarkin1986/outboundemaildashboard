@@ -18,6 +18,10 @@ function statusClass(status: ReviewContact['status']) {
   return 'needsEdit';
 }
 
+function emailDisplayLabel(email: ReviewContact['emails'][number]) {
+  return email.step_label ?? `Email ${email.step_number}`;
+}
+
 export function BatchReviewApp({ initialState, token }: { initialState: BatchReviewState; token: string }) {
   const [state, setState] = useState(() => normalizeBatchReviewStateForEditing(initialState));
   const firstContact = state.runs.flatMap((r) => r.review.contacts.map((c) => ({ runId: r.run_id, contactId: c.id }))).at(0);
@@ -101,8 +105,16 @@ export function BatchReviewApp({ initialState, token }: { initialState: BatchRev
   }
 
   function exportCsv() {
-    const rows = [['company','email','first_name','last_name','title','status','subject_1','body_1','subject_2','body_2','subject_3','body_3']];
-    for (const run of state.runs) for (const c of run.review.contacts) rows.push([run.company_name, c.email, c.first_name ?? '', c.last_name ?? '', c.title ?? '', c.status, ...c.emails.flatMap((e) => [e.subject, stripEmailHtml(e.body_html)])]);
+    const maxEmails = Math.max(0, ...state.runs.flatMap((run) => run.review.contacts.map((contact) => contact.emails.length)));
+    const emailHeaders = Array.from({ length: maxEmails }, (_, index) => [`email_${index + 1}_label`, `subject_${index + 1}`, `body_${index + 1}`]).flat();
+    const rows = [['company','email','first_name','last_name','title','status','sequence_code',...emailHeaders]];
+    for (const run of state.runs) for (const c of run.review.contacts) {
+      const emailValues = Array.from({ length: maxEmails }, (_, index) => {
+        const email = c.emails[index];
+        return email ? [emailDisplayLabel(email), email.subject, stripEmailHtml(email.body_html)] : ['', '', ''];
+      }).flat();
+      rows.push([run.company_name, c.email, c.first_name ?? '', c.last_name ?? '', c.title ?? '', c.status, c.sequence_code ?? '', ...emailValues]);
+    }
     download(`${state.batch.id}-review.csv`, rows.map((r) => r.map((v) => `"${String(v).replaceAll('"','""')}"`).join(',')).join('\n'), 'text/csv');
   }
 
@@ -178,7 +190,7 @@ export function BatchReviewApp({ initialState, token }: { initialState: BatchRev
           </div>
           <div className="emailStack">
             {selectedContact.emails.map((email) => <div className="reviewCard emailCard" key={email.id}>
-              <div className="emailHeader"><div><div className="sectionEyebrow">Email {email.step_number}</div><h3>{email.subject}</h3></div><span className="badge neutralBadge">Draft</span></div>
+              <div className="emailHeader"><div><div className="sectionEyebrow">{emailDisplayLabel(email)}</div><h3>{email.subject}</h3></div><span className="badge neutralBadge">Draft</span></div>
               <div className="emailGrid"><div className="emailEditor"><label>Subject<input value={email.subject} onChange={(e) => updateEmail(selectedRun.run_id, selectedContact.id, email.step_number, { subject: e.target.value })} /></label><label>Body text<textarea rows={9} value={email.body_text} onChange={(e) => updateEmail(selectedRun.run_id, selectedContact.id, email.step_number, { body_text: e.target.value, body_html: editableTextToHtml(e.target.value) })} /></label></div><div className="previewPane"><div className="sectionEyebrow">Rendered preview</div><div className="emailPreviewFrame"><div className="emailPreviewMeta"><span>Subject</span><strong>{email.subject}</strong></div><div className="emailPreviewBody">{emailParagraphs(email.body_html).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div></div></div></div>
             </div>)}
           </div>

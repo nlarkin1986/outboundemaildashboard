@@ -20,14 +20,18 @@ export const companyAgentOutputSchema = z.object({
     opening_hook: z.string(),
     proof_used: z.string(),
     guardrail: z.string().optional(),
+    sequence_code: z.string().optional(),
+    play_metadata: z.record(z.string(), z.unknown()).optional(),
     evidence_urls: z.array(z.string().url()).default([]),
     qa_warnings: z.array(z.string()).default([]),
     emails: z.array(z.object({
-      step_number: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+      step_number: z.number().int().positive(),
+      original_step_number: z.number().int().positive().optional(),
+      step_label: z.string().optional(),
       subject: z.string(),
       body_text: z.string(),
       body_html: z.string(),
-    })).length(3),
+    })).min(1),
   })),
 });
 

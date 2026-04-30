@@ -4,10 +4,22 @@
     "app/api/runs/route.ts": {
       "maxDuration": 60
     },
+    "app/api/mcp/route.ts": {
+      "maxDuration": 30
+    },
     "app/api/internal/push/[runId]/route.ts": {
       "maxDuration": 60
     },
+    "app/api/internal/process-batch/[batchId]/route.ts": {
+      "maxDuration": 60
+    },
+    "app/api/internal/push-batch/[batchId]/route.ts": {
+      "maxDuration": 60
+    },
     "app/api/webhooks/cowork/route.ts": {
+      "maxDuration": 30
+    },
+    "app/api/webhooks/cowork/batch/route.ts": {
       "maxDuration": 30
     }
   }

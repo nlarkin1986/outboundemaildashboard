@@ -6,6 +6,8 @@ Use this wording in Cowork / Managed Agent workflow instructions for the Gladly 
 
 When you call `create_outbound_sequence`, treat the returned `batch_id` as the durable workflow handle.
 
+For the BDR cold outbound play, set `play_id` to `bdr_cold_outbound`. Before calling, ask at most two follow-up turns: one to confirm the BDR play if the user's sequencing intent is ambiguous, and one to collect missing company, domain when known, contact names, contact titles, optional emails, and campaign target information.
+
 If the response status is `queued`, `processing`, or `pushing`, do not tell the user the workflow is complete. Wait `recommended_poll_after_seconds`, then call `get_outbound_sequence_status` with:
 
 - `batch_id` from the create response
@@ -67,6 +69,7 @@ If it returns `review_submitted` or `pushed`, tell the user the review/push stat
 ## Guardrails
 
 - Do not include generated email bodies or research payloads in Cowork deep links.
+- For `bdr_cold_outbound`, do not invent titles, brand categories, emails, or review findings. Missing or unsupported values should become review warnings.
 - Use `batch_id` plus backend status as the durable source of truth.
 - Status polling must not start duplicate processing.
 - If polling stops, resume with `get_outbound_sequence_status(batch_id, actor.email)`.
