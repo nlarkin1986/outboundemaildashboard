@@ -6,9 +6,20 @@ if (!rawUrl) {
   process.exit(1);
 }
 
-const endpoint = rawUrl.endsWith('/api/mcp')
-  ? rawUrl
-  : `${rawUrl.replace(/\/$/, '')}/api/mcp`;
+function normalizeEndpoint(value) {
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('unsupported protocol');
+    if (!parsed.pathname.endsWith('/api/mcp')) parsed.pathname = `${parsed.pathname.replace(/\/$/, '')}/api/mcp`;
+    return parsed.toString();
+  } catch {
+    console.error(`MCP URL must be an absolute http(s) URL, got: ${value}`);
+    console.error('Set APP_BASE_URL to your deployed app URL, for example: APP_BASE_URL="https://your-app.vercel.app"');
+    process.exit(1);
+  }
+}
+
+const endpoint = normalizeEndpoint(rawUrl);
 const healthEndpoint = new URL('/api/health', endpoint).toString();
 
 const headers = { 'content-type': 'application/json' };
