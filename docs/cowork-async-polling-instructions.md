@@ -12,6 +12,8 @@ If the user selects the BDR outreach sequence play, ask: "Do you have a CSV, or 
 
 If the user selects a fully custom sequence, do not set `play_id`. The current generic/custom research-to-sequence path is represented by omitting `play_id`.
 
+If metadata says the BDR play was confirmed, the create call must also include `play_id: "bdr_cold_outbound"`. Do not send BDR-confirming `play_metadata` without the durable `play_id`; the backend rejects that shape because it would otherwise look like a generic/custom batch.
+
 Cowork should not choose the BDR sequence variant. If Cowork does not have contact names or titles, the backend workflow searches for public CX/support/eCommerce/digital candidates. The backend uses the supplied or discovered company/contact context and public research to choose the sequence, then performs a second targeted research pass for only the placeholders required by that selected sequence.
 
 If the response status is `queued`, `processing`, or `pushing`, do not tell the user the workflow is complete. Wait `recommended_poll_after_seconds`, then call `get_outbound_sequence_status` with:
@@ -66,6 +68,9 @@ Cowork should say the batch has started, wait about 30 seconds, then call:
 
 If `get_outbound_sequence_status` returns `ready_for_review`, present the `review_url` and `dashboard_status_url`, summarize any `run_counts`, and stop polling.
 
+For BDR batches, check the returned `diagnostics.processing_route`. It must be `bdr_workflow`. If it is `generic_company_agent`, treat the batch as a routing failure and do not summarize the generated copy as BDR output.
+Also compare `diagnostics.deployment.contract_revision` with the installed account-sequencer skill revision. If they do not match, refresh/reconnect the Cowork MCP wrapper before creating customer work.
+
 If it returns `partially_failed`, summarize `errors`, present `dashboard_status_url`, and stop polling.
 
 If it returns `failed`, surface the failure, present `dashboard_status_url`, and stop polling.
@@ -76,6 +81,7 @@ If it returns `review_submitted` or `pushed`, tell the user the review/push stat
 
 - Do not include generated email bodies or research payloads in Cowork deep links.
 - For `bdr_cold_outbound`, do not invent titles, brand categories, emails, or review findings. Missing or unsupported values should become review warnings.
+- For `bdr_cold_outbound`, generic subjects such as `handoffs without the reset`, `full conversation history`, or `before it becomes urgent` mean the generic company-agent route ran. Stop and report a routing issue instead of asking the user to approve that copy.
 - Use `batch_id` plus backend status as the durable source of truth.
 - Status polling must not start duplicate processing.
 - If polling stops, resume with `get_outbound_sequence_status(batch_id, actor.email)`.

@@ -1,5 +1,7 @@
 # MCP BDR Handoff
 
+Revision: `bdr-vercel-pipeline-2026-05-01`
+
 Cowork determines whether the user selected the BDR outreach sequence play. The
 Vercel workflow determines everything inside the BDR play: brand type, contact
 candidate handling, persona, exact sequence code, placeholder research, email
@@ -92,3 +94,11 @@ Do not add these to the create call:
 - raw research findings
 
 Those are backend-owned outputs and appear in the review dashboard.
+
+## Route verification
+
+After create and status calls, compare the returned
+`diagnostics.deployment.contract_revision` with this skill revision. If the
+response is for a BDR-selected request and reports
+`diagnostics.processing_route: "generic_company_agent"`, stop and report a
+routing issue instead of summarizing or approving the generated copy.

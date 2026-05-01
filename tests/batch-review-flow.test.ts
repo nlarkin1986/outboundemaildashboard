@@ -130,6 +130,67 @@ describe('batch review flow', () => {
     expect(contact.emails.map((email) => email.step_label)).toEqual(['Step 1: Email · peer story', 'Step 4: Email · benchmarks / data']);
   });
 
+  it('does not use generic company-agent copy for a BDR contact without a verified email', async () => {
+    const batch = await createBatch({
+      actor: { email: 'nate@example.com' },
+      cowork_thread_id: 'cowork-thread-123',
+      campaign_id: 'campaign-1',
+      play_id: 'bdr_cold_outbound',
+      play_metadata: {
+        intake: {
+          confirmed_play: 'bdr_cold_outbound',
+          user_request_summary: 'Run the BDR play for KiwiCo and Steven Holm.',
+        },
+      },
+      companies: [{
+        company_name: 'KiwiCo',
+        domain: 'kiwico.com',
+        contacts: [{ name: 'Steven Holm', title: 'Director of Customer Care' }],
+      }],
+    });
+
+    await processBatch(batch.id);
+    const state = await getBatchReviewByToken(batch.review_token);
+    const contact = state.runs[0].review.contacts[0];
+    const rendered = JSON.stringify(contact);
+
+    expect(state.batch.play_id).toBe('bdr_cold_outbound');
+    expect(state.runs[0].review.run.play_id).toBe('bdr_cold_outbound');
+    expect(contact.email).toMatch(/^missing-contact-1\+kiwico@example\.invalid$/);
+    expect(contact.play_metadata?.play_id).toBe('bdr_cold_outbound');
+    expect(contact.qa_warnings.join(' ')).toMatch(/No verified contact email/);
+    expect(contact.emails.map((email) => email.original_step_number)).toContain(1);
+    expect(rendered).not.toMatch(/handoffs without the reset|full conversation history|before it becomes urgent/i);
+    expect(rendered).not.toMatch(/KUHL: 44% reduction in WISMO emails/i);
+  });
+
+  it('fails closed when BDR-confirming metadata is missing the durable play id', async () => {
+    const batch = await createBatch({
+      actor: { email: 'nate@example.com' },
+      cowork_thread_id: 'cowork-thread-123',
+      campaign_id: 'campaign-1',
+      play_metadata: {
+        intake: {
+          confirmed_play: 'bdr_cold_outbound',
+          user_request_summary: 'Run the BDR play for KiwiCo and Steven Holm.',
+        },
+      },
+      companies: [{
+        company_name: 'KiwiCo',
+        domain: 'kiwico.com',
+        contacts: [{ name: 'Steven Holm', title: 'Director of Customer Care' }],
+      }],
+    });
+
+    const processed = await processBatch(batch.id);
+    const state = await getBatchReviewByToken(batch.review_token);
+
+    expect(processed.status).toBe('partially_failed');
+    expect(state.batch.status).toBe('partially_failed');
+    expect(state.batch.error).toMatch(/durable play_id/i);
+    expect(state.runs).toHaveLength(0);
+  });
+
   it('pushes BDR reviewed drafts without requiring a third email', async () => {
     const batch = await createBatch({
       actor: { email: 'nate@example.com' },

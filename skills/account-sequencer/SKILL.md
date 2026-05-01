@@ -10,6 +10,8 @@ description: >
 
 # Account Sequencer
 
+Revision: `bdr-vercel-pipeline-2026-05-01`
+
 Use this skill to route outbound sequence requests into the Gladly approval
 workflow. The skill does not write final email copy inline. It creates a
 backend batch, polls for status, and gives the user the review dashboard.

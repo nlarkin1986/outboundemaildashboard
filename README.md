@@ -146,9 +146,28 @@ MCP_URL="$APP_BASE_URL/api/mcp" MCP_API_SECRET="$MCP_API_SECRET" npm run mcp:sch
 
 The check is read-only. It must show `create_outbound_sequence` accepts `play_id`, `play_metadata`, and `bdr_cold_outbound`; otherwise Cowork may route BDR requests as generic batches from a stale schema.
 
-6. Refresh or reconnect the Cowork MCP wrapper after the live schema check passes, so any cached tool schema includes `play_id` and `play_metadata`.
-7. Confirm Cowork can create a batch through MCP or `POST /api/webhooks/cowork/batch`, then poll `get_outbound_sequence_status` until `ready_for_review`.
-8. Confirm internal batch processing and push endpoints return `401` without `INTERNAL_API_SECRET` and process successfully with it.
+6. Run one controlled BDR processing smoke against the deployed Vercel MCP endpoint, not localhost:
+
+```bash
+MCP_URL="$APP_BASE_URL/api/mcp" \
+MCP_API_SECRET="$MCP_API_SECRET" \
+BDR_SMOKE_ACTOR_EMAIL="your-internal-user@example.com" \
+BDR_SMOKE_COMPANY_NAME="Gruns" \
+BDR_SMOKE_COMPANY_DOMAIN="gruns.co" \
+BDR_SMOKE_CONTACT_NAME="Jillian" \
+BDR_SMOKE_CONTACT_TITLE="Director of Customer Experience" \
+BDR_SMOKE_REQUIRE_VERCEL=true \
+BDR_SMOKE_REQUIRE_DATABASE=true \
+npm run mcp:bdr-smoke
+```
+
+The smoke creates a traceable review-first BDR batch, polls status, fetches review state, and fails if the output contains the generic company-agent subjects `handoffs without the reset`, `full conversation history`, or `before it becomes urgent`. It must report `processing_route: "bdr_workflow"` and Vercel/database diagnostics before Cowork users create customer work.
+The default smoke uses the current Gruns/Jillian failure shape, and the company/contact/title can be overridden with `BDR_SMOKE_COMPANY_NAME`, `BDR_SMOKE_COMPANY_DOMAIN`, `BDR_SMOKE_CONTACT_NAME`, and `BDR_SMOKE_CONTACT_TITLE`. The output also prints the deployment `contract_revision`; compare it with the installed account-sequencer skill revision before enabling Cowork.
+
+7. Confirm required BDR research providers are configured. `EXA_API_KEY` should be present in Vercel; if it is missing, BDR output may contain BDR-specific research warnings, but it must not fall back to the generic three-email company-agent sequence.
+8. Refresh or reconnect the Cowork MCP wrapper after the live schema and processing smoke checks pass, so any cached tool schema includes `play_id`, `play_metadata`, and the expected `contract_revision`.
+9. Confirm Cowork can create a batch through MCP or `POST /api/webhooks/cowork/batch`, then poll `get_outbound_sequence_status` until `ready_for_review`. The returned `diagnostics.processing_route` should be `bdr_workflow` for BDR batches and `generic_company_agent` only for fully custom batches.
+10. Confirm internal batch processing and push endpoints return `401` without `INTERNAL_API_SECRET` and process successfully with it.
 
 ## Push endpoints
 
@@ -197,7 +216,7 @@ The response includes `batch_id`, `review_url`, and `process_url`. Company-only 
 
 The first play-specific path uses `play_id: "bdr_cold_outbound"`. It reuses the same batch approval flow, but routes processing through the BDR play for retail/ecommerce account sequencing. The plugin or Cowork host should ask at most two follow-up turns before calling the tool: one to confirm the BDR play if intent is ambiguous, and one to collect missing company/domain/contact/title/campaign details.
 
-Before enabling the Cowork skill for BDR use, verify the deployed MCP schema and refresh Cowork's cached tool schema. If `npm run mcp:schema:verify` does not see `play_id`, `play_metadata`, and `bdr_cold_outbound` on the live endpoint, BDR requests will create generic batches even if the skill instructions mention the BDR play.
+Before enabling the Cowork skill for BDR use, verify the deployed MCP schema, run the BDR processing smoke, and refresh Cowork's cached tool schema. If `npm run mcp:schema:verify` does not see `play_id`, `play_metadata`, and `bdr_cold_outbound` on the live endpoint, BDR requests will create generic batches even if the skill instructions mention the BDR play. If `npm run mcp:bdr-smoke` reports generic company-agent subjects such as `handoffs without the reset`, `full conversation history`, or `before it becomes urgent`, stop rollout and debug BDR routing before creating customer batches.
 
 Cowork determines the play; the app determines the contacts, sequence, and placeholders. If Cowork only supplies a company, BDR processing searches for public CX/support/eCommerce/digital candidates, runs a sequence-planning pass, then researches only the placeholders required by the selected Step 1 and Step 4 templates before writing drafts into review.
 
@@ -225,6 +244,18 @@ curl -X POST "$APP_BASE_URL/api/mcp" \
 ```
 
 BDR contacts without real emails are draftable but non-pushable. The review UI labels the generated manual drafts with their original play steps, usually Step 1 and Step 4. See `docs/bdr-play-intake.md` for the full plugin intake contract.
+
+BDR create/status responses include sanitized `diagnostics` so operators can distinguish expected routing and runtime state without exposing secrets. For BDR batches, `diagnostics.processing_route` must be `bdr_workflow`; `generic_company_agent` means the batch was treated as fully custom.
+
+### Stale BDR batch triage
+
+Use this checklist before editing or approving a review URL that was meant to be BDR output:
+
+1. Poll `get_outbound_sequence_status` for the batch ID. BDR-intended work must include `play_id: "bdr_cold_outbound"` and `diagnostics.processing_route: "bdr_workflow"`.
+2. Compare `diagnostics.deployment.contract_revision` with the installed `account-sequencer` skill revision. If they differ, refresh/reconnect the Cowork MCP wrapper and recreate the batch.
+3. Open `/admin/runs?batch_id=batch_...` and check route triage. `Suspect BDR fallback` means BDR intent is present but the review copy matches generic company-agent fallback text.
+4. If the review output contains `handoffs without the reset`, `full conversation history`, or `before it becomes urgent` for a BDR-selected request, do not approve or edit it as BDR copy. Recreate it after the deployed schema, skill revision, and live smoke pass.
+5. Generic company-agent copy is acceptable only for the fully custom path where `play_id` is intentionally omitted.
 
 ## Validation
 

@@ -1,5 +1,7 @@
 # Account Sequencer Skill
 
+Revision: `bdr-vercel-pipeline-2026-05-01`
+
 Source for the Cowork-facing `account-sequencer` skill. The installable
 `.skill` archive is a generated artifact; edit this directory first, then
 package it.

@@ -9,6 +9,7 @@ if (!rawUrl) {
 const endpoint = rawUrl.endsWith('/api/mcp')
   ? rawUrl
   : `${rawUrl.replace(/\/$/, '')}/api/mcp`;
+const healthEndpoint = new URL('/api/health', endpoint).toString();
 
 const headers = { 'content-type': 'application/json' };
 if (process.env.MCP_API_SECRET) {
@@ -54,6 +55,15 @@ function assertCreateToolContract(tools, label) {
   if (!playMetadata || playMetadata.type !== 'object') {
     throw new Error(`${label} create_outbound_sequence is missing object play_metadata.`);
   }
+  const diagnostics = createTool.outputSchema?.properties?.diagnostics;
+  if (!diagnostics?.properties?.deployment?.properties?.contract_revision) {
+    throw new Error(`${label} create_outbound_sequence output diagnostics are missing deployment.contract_revision.`);
+  }
+}
+
+function assertHealthContract(body) {
+  if (!body?.contract_revision) throw new Error(`GET /api/health is missing contract_revision.`);
+  return body.contract_revision;
 }
 
 async function fetchDirectTools() {
@@ -70,14 +80,22 @@ async function fetchJsonRpcTools() {
   return parseJsonResponse(response, 'JSON-RPC tools/list');
 }
 
+async function fetchHealth() {
+  const response = await fetch(healthEndpoint, { headers });
+  return parseJsonResponse(response, 'GET /api/health');
+}
+
 try {
+  const health = await fetchHealth();
+  const contractRevision = assertHealthContract(health);
+
   const direct = await fetchDirectTools();
   assertCreateToolContract(extractTools(direct, 'GET /api/mcp'), 'GET /api/mcp');
 
   const rpc = await fetchJsonRpcTools();
   assertCreateToolContract(extractTools(rpc, 'JSON-RPC tools/list'), 'JSON-RPC tools/list');
 
-  console.log(`MCP schema OK: ${endpoint} exposes play_id and play_metadata for create_outbound_sequence.`);
+  console.log(`MCP schema OK: ${endpoint} exposes play_id and play_metadata for create_outbound_sequence. contract_revision=${contractRevision}`);
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);

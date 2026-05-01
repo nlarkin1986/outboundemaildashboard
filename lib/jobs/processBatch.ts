@@ -1,5 +1,6 @@
 import { runCompanyAgent } from '@/lib/agent/run-company-agent';
 import { runBdrPlayWorkflow } from '@/lib/plays/bdr/workflow-runner';
+import { assertNoBdrRoutingMismatch } from '@/lib/plays/bdr/intent';
 import { BDR_PLAY_ID } from '@/lib/plays/bdr/types';
 import { attachRunToBatch, createRun, getBatchById, listBatchRuns, recordCoworkMessage, reviewUrlForBatchToken, saveResearchArtifact, saveReviewState, updateBatchRunStatus, updateBatchStatus } from '@/lib/store';
 import { postCoworkBatchReady } from '@/lib/cowork/client';
@@ -44,13 +45,14 @@ function batchCompanyKey(company: CompanyInput) {
   return `name:${company.company_name.trim().toLowerCase().replace(/\s+/g, ' ')}`;
 }
 
-export async function processBatch(batchId: string) {
+export async function processBatch(batchId: string, options: { triggerId?: string } = {}) {
   const batch = await getBatchById(batchId);
   if (!batch) throw new Error(`Batch not found: ${batchId}`);
   await updateBatchStatus(batchId, 'processing');
 
   let failures = 0;
   let pending = 0;
+  const errors: string[] = [];
   const existingRuns = new Map((await listBatchRuns(batchId)).map((run) => [run.company_key ?? batchCompanyKey(run), run]));
   for (const company of batch.companies) {
     const companyKey = batchCompanyKey(company);
@@ -67,6 +69,7 @@ export async function processBatch(batchId: string) {
 
     let runId = '';
     try {
+      assertNoBdrRoutingMismatch(batch);
       const hasContacts = (company.contacts?.length ?? 0) > 0;
       const normalizedInputContacts = hasContacts ? company.contacts!.map((contact, index) => normalizeBatchContact(company, contact, index)) : undefined;
       const companyForAgent = normalizedInputContacts ? { ...company, contacts: normalizedInputContacts } : company;
@@ -153,15 +156,17 @@ export async function processBatch(batchId: string) {
       });
       await updateBatchRunStatus(batchId, run.id, 'ready_for_review');
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(message);
       failures += 1;
-      if (runId) await updateBatchRunStatus(batchId, runId, 'failed', error instanceof Error ? error.message : String(error));
+      if (runId) await updateBatchRunStatus(batchId, runId, 'failed', message);
     }
   }
 
   const finalStatus = pending ? 'processing' : failures ? 'partially_failed' : 'ready_for_review';
-  await updateBatchStatus(batchId, finalStatus);
+  await updateBatchStatus(batchId, finalStatus, errors.length ? errors.join('; ') : undefined);
   const reviewUrl = batch.review_url || reviewUrlForBatchToken(batch.review_token);
-  if (pending) return { ok: true as const, batch_id: batchId, status: finalStatus, review_url: reviewUrl, failures };
+  if (pending) return { ok: true as const, batch_id: batchId, status: finalStatus, review_url: reviewUrl, failures, trigger_id: options.triggerId };
   let message;
   try {
     message = await postCoworkBatchReady({ batchId, threadId: batch.cowork_thread_id, reviewUrl });
@@ -169,5 +174,5 @@ export async function processBatch(batchId: string) {
     message = { status: 'failed' as const, error: error instanceof Error ? error.message : String(error) };
   }
   await recordCoworkMessage({ batch_id: batchId, thread_id: batch.cowork_thread_id, direction: 'outbound', status: message.status, payload: { text: `Your outbound dashboard is ready: ${reviewUrl}`, review_url: reviewUrl, account_id: batch.account_id, created_by_user_id: batch.created_by_user_id, created_by: batch.requested_by }, response: message.response, error: message.error });
-  return { ok: true as const, batch_id: batchId, status: finalStatus, review_url: reviewUrl, failures };
+  return { ok: true as const, batch_id: batchId, status: finalStatus, review_url: reviewUrl, failures, trigger_id: options.triggerId };
 }

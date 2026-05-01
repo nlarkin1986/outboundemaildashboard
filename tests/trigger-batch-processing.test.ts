@@ -14,6 +14,8 @@ describe('triggerBatchProcessing', () => {
     await expect(triggerBatchProcessing('batch_1')).resolves.toEqual({
       started: false,
       mode: 'not-started',
+      correlation_id: expect.stringMatching(/^batch-trigger-/),
+      requested_at: expect.any(String),
       warning: expect.stringMatching(/INTERNAL_API_SECRET/i),
     });
   });
@@ -28,6 +30,8 @@ describe('triggerBatchProcessing', () => {
     await expect(triggerBatchProcessing('batch_1')).resolves.toEqual({
       started: false,
       mode: 'not-started',
+      correlation_id: expect.stringMatching(/^batch-trigger-/),
+      requested_at: expect.any(String),
       warning: expect.stringMatching(/APP_BASE_URL/i),
     });
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -42,10 +46,16 @@ describe('triggerBatchProcessing', () => {
     await expect(triggerBatchProcessing('batch with spaces')).resolves.toEqual({
       started: true,
       mode: 'internal-endpoint',
+      correlation_id: expect.stringMatching(/^batch-trigger-/),
+      requested_at: expect.any(String),
+      internal_path: '/api/internal/process-batch/batch%20with%20spaces',
     });
     expect(fetchSpy).toHaveBeenCalledWith('https://example.com/api/internal/process-batch/batch%20with%20spaces', {
       method: 'POST',
-      headers: { authorization: 'Bearer super-secret' },
+      headers: {
+        authorization: 'Bearer super-secret',
+        'x-batch-trigger-id': expect.stringMatching(/^batch-trigger-/),
+      },
     });
   });
 });

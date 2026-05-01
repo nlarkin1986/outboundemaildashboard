@@ -10,7 +10,7 @@ export async function POST(request: Request, context: { params: Promise<{ batchI
   }
   try {
     const { batchId } = await context.params;
-    return NextResponse.json(await processBatch(batchId));
+    return NextResponse.json(await processBatch(batchId, { triggerId: request.headers.get('x-batch-trigger-id') ?? undefined }));
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 });
   }

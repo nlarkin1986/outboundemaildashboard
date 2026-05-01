@@ -39,6 +39,39 @@ const pollingOutputSchema = {
     max_poll_attempts: { type: 'number' },
     is_terminal: { type: 'boolean' },
     cowork_next_action: { type: 'object', additionalProperties: true },
+    processing: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        started: { type: 'boolean' },
+        mode: { type: 'string' },
+        correlation_id: { type: 'string' },
+        requested_at: { type: 'string' },
+        internal_path: { type: 'string' },
+        state: { type: 'string' },
+        run_count: { type: 'number' },
+      },
+    },
+    diagnostics: {
+      type: 'object',
+      additionalProperties: true,
+      properties: {
+        processing_route: { type: 'string' },
+        runtime: { type: 'string' },
+        persistence: { type: 'string' },
+        deployment: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+            contract_revision: { type: 'string' },
+            environment: { type: 'string' },
+            deployment_url: { type: 'string' },
+            git: { type: 'object', additionalProperties: true },
+          },
+        },
+        research_providers: { type: 'object', additionalProperties: true },
+      },
+    },
   },
 };
 

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { GET as HEALTH_GET } from '@/app/api/health/route';
 import { GET, POST } from '@/app/api/mcp/route';
 import { resetStore } from '@/lib/store';
 
@@ -8,6 +9,11 @@ function request(body: unknown) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
+}
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
 }
 
 describe('mcp route protocol compatibility', () => {
@@ -25,6 +31,41 @@ describe('mcp route protocol compatibility', () => {
       play_id: { type: 'string', enum: ['bdr_cold_outbound'] },
       play_metadata: { type: 'object', additionalProperties: true },
     });
+    expect(createTool.outputSchema.properties.diagnostics).toMatchObject({
+      type: 'object',
+      additionalProperties: true,
+    });
+    expect(createTool.outputSchema.properties.diagnostics.properties.deployment.properties).toMatchObject({
+      contract_revision: { type: 'string' },
+    });
+    expect(createTool.outputSchema.properties.processing.properties).toMatchObject({
+      correlation_id: { type: 'string' },
+      state: { type: 'string' },
+    });
+  });
+
+  it('keeps public health diagnostics coarse', async () => {
+    const previous = {
+      sha: process.env.VERCEL_GIT_COMMIT_SHA,
+      ref: process.env.VERCEL_GIT_COMMIT_REF,
+      url: process.env.VERCEL_URL,
+    };
+    process.env.VERCEL_GIT_COMMIT_SHA = 'abc123';
+    process.env.VERCEL_GIT_COMMIT_REF = 'main';
+    process.env.VERCEL_URL = 'outbound.example.vercel.app';
+
+    const response = await HEALTH_GET();
+    const body = await response.json();
+
+    expect(body.ok).toBe(true);
+    expect(body.contract_revision).toMatch(/^bdr-/);
+    expect(JSON.stringify(body)).not.toContain('abc123');
+    expect(JSON.stringify(body)).not.toContain('outbound.example.vercel.app');
+    expect(JSON.stringify(body)).not.toContain('main');
+
+    restoreEnv('VERCEL_GIT_COMMIT_SHA', previous.sha);
+    restoreEnv('VERCEL_GIT_COMMIT_REF', previous.ref);
+    restoreEnv('VERCEL_URL', previous.url);
   });
 
   it('supports initialize and tools/list JSON-RPC requests', async () => {
@@ -58,6 +99,8 @@ describe('mcp route protocol compatibility', () => {
     const body = await response.json();
     expect(body.result.isError).toBe(false);
     expect(body.result.structuredContent.batch_id).toMatch(/^batch_/);
+    expect(body.result.structuredContent.processing.correlation_id).toMatch(/^batch-trigger-/);
+    expect(body.result.structuredContent.diagnostics.deployment.contract_revision).toMatch(/^bdr-/);
     expect(JSON.parse(body.result.content[0].text).batch_id).toBe(body.result.structuredContent.batch_id);
   });
 
@@ -104,6 +147,27 @@ describe('mcp route protocol compatibility', () => {
     const body = await response.json();
     expect(body.result.isError).toBe(true);
     expect(body.result.structuredContent.error).toMatch(/play_id/i);
+  });
+
+  it('rejects BDR-confirming metadata when play_id is omitted', async () => {
+    const response = await POST(request({
+      jsonrpc: '2.0',
+      id: 7,
+      method: 'tools/call',
+      params: {
+        name: 'create_outbound_sequence',
+        arguments: {
+          actor: { email: 'bdr@company.com', cowork_thread_id: 'thread-bdr' },
+          play_metadata: { intake: { confirmed_play: 'bdr_cold_outbound' } },
+          companies: [{ company_name: 'KiwiCo', domain: 'kiwico.com' }],
+        },
+      },
+    }));
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.result.isError).toBe(true);
+    expect(body.result.structuredContent.error).toMatch(/durable play_id/i);
   });
 
   it('keeps direct non-JSON-RPC tool invocation compatible', async () => {

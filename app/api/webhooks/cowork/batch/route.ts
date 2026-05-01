@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createBatch, reviewUrlForBatchToken } from '@/lib/store';
+import { assertNoBdrRoutingMismatch } from '@/lib/plays/bdr/intent';
 
 function normalizeEmail(value: unknown) {
   if (typeof value !== 'string') return undefined;
@@ -78,6 +79,7 @@ export async function POST(request: Request) {
     if (!payload.actor?.email && (process.env.VERCEL || process.env.NODE_ENV === 'production') && process.env.ALLOW_MISSING_COWORK_ACTOR_EMAIL !== 'true') {
       return NextResponse.json({ error: 'Cowork actor email is required' }, { status: 400 });
     }
+    assertNoBdrRoutingMismatch(payload);
     const batch = await createBatch(payload);
     return NextResponse.json({
       ok: true,
