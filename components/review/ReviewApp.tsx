@@ -22,6 +22,19 @@ function statusClass(status: ReviewContact['status']) {
   return 'needsEdit';
 }
 
+function emailDisplayLabel(email: ReviewContact['emails'][number]) {
+  return email.step_label ?? `Email ${email.step_number}`;
+}
+
+function linkedinNote(contact: ReviewContact) {
+  const value = contact.play_metadata?.linkedin_note;
+  if (!value || typeof value !== 'object') return undefined;
+  const note = (value as { note?: unknown; label?: unknown }).note;
+  const label = (value as { note?: unknown; label?: unknown }).label;
+  if (typeof note !== 'string' || !note.trim()) return undefined;
+  return { note, label: typeof label === 'string' ? label : 'LinkedIn connection note' };
+}
+
 export function ReviewApp({ initialState, token }: { initialState: ReviewState; token: string }) {
   const [state, setState] = useState(() => normalizeReviewStateForEditing(initialState));
   const [selectedId, setSelectedId] = useState(initialState.contacts[0]?.id);
@@ -30,6 +43,7 @@ export function ReviewApp({ initialState, token }: { initialState: ReviewState; 
   const [message, setMessage] = useState('No Instantly push has been made yet.');
   const [popup, setPopup] = useState<string | null>(null);
   const selected = state.contacts.find((c) => c.id === selectedId) ?? state.contacts[0];
+  const selectedLinkedInNote = selected ? linkedinNote(selected) : undefined;
 
   const counts = useMemo(() => ({
     total: state.contacts.length,
@@ -94,8 +108,16 @@ export function ReviewApp({ initialState, token }: { initialState: ReviewState; 
   }
 
   function exportCsv() {
-    const rows = [['email','first_name','last_name','company','title','status','subject_1','body_1','subject_2','body_2','subject_3','body_3']];
-    for (const c of state.contacts) rows.push([c.email, c.first_name ?? '', c.last_name ?? '', c.company ?? '', c.title ?? '', c.status, ...c.emails.flatMap((e) => [e.subject, stripEmailHtml(e.body_html)])]);
+    const maxEmails = Math.max(0, ...state.contacts.map((contact) => contact.emails.length));
+    const emailHeaders = Array.from({ length: maxEmails }, (_, index) => [`email_${index + 1}_label`, `subject_${index + 1}`, `body_${index + 1}`]).flat();
+    const rows = [['email','first_name','last_name','company','title','status','sequence_code',...emailHeaders]];
+    for (const c of state.contacts) {
+      const emailValues = Array.from({ length: maxEmails }, (_, index) => {
+        const email = c.emails[index];
+        return email ? [emailDisplayLabel(email), email.subject, stripEmailHtml(email.body_html)] : ['', '', ''];
+      }).flat();
+      rows.push([c.email, c.first_name ?? '', c.last_name ?? '', c.company ?? '', c.title ?? '', c.status, c.sequence_code ?? '', ...emailValues]);
+    }
     const csv = rows.map((r) => r.map((v) => `"${String(v).replaceAll('"','""')}"`).join(',')).join('\n');
     download(`${state.run.company_name}-review.csv`, csv, 'text/csv');
   }
@@ -213,12 +235,13 @@ export function ReviewApp({ initialState, token }: { initialState: ReviewState; 
               <label>Guardrail<textarea value={selected.guardrail ?? ''} onChange={(e) => updateContact(selected.id, { guardrail: e.target.value })} /></label>
             </div>
             {selected.qa_warnings.length ? <div className="warningCallout">{selected.qa_warnings.join(', ')}</div> : <div className="okCallout">This draft has no QA warnings. Confirm evidence still matches the outbound claim.</div>}
+            {selectedLinkedInNote ? <div className="warningCallout"><strong>{selectedLinkedInNote.label}:</strong> {selectedLinkedInNote.note}</div> : null}
           </div>
 
           <div className="emailStack" id="emails">
             {selected.emails.map((email) => <div className="reviewCard emailCard" key={email.id}>
               <div className="emailHeader">
-                <div><div className="sectionEyebrow">Email {email.step_number}</div><h3>{email.subject}</h3></div>
+                <div><div className="sectionEyebrow">{emailDisplayLabel(email)}</div><h3>{email.subject}</h3></div>
                 <span className="badge neutralBadge">Draft</span>
               </div>
               <div className="emailGrid">

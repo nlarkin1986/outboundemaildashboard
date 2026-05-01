@@ -112,6 +112,8 @@ export async function createRun(input: CreateRunInput): Promise<Run & { contacts
     status: 'queued',
     mode: data.mode,
     source: data.source,
+    play_id: data.play_id,
+    play_metadata: data.play_metadata,
     account_id: data.account_id,
     created_by_user_id: data.created_by_user_id,
     created_by: data.created_by,
@@ -138,6 +140,8 @@ export async function createRun(input: CreateRunInput): Promise<Run & { contacts
       email: contact.email,
       domain: contact.domain ?? data.domain,
       status: 'needs_edit',
+      sequence_code: undefined,
+      play_metadata: undefined,
       evidence_urls: [],
       qa_warnings: [],
     };
@@ -181,7 +185,7 @@ export async function generateDraftForRun(runId: string): Promise<ReviewState> {
         ['before it becomes urgent', `<p>Hi ${first},</p><p>Last note from me. Gladly is built around the customer rather than the ticket, which helps teams route and resolve urgent conversations with the right history attached.</p><p>Open to a quick look?</p>`],
       ] as const;
       drafts.forEach(([subject, body], index) => {
-        const email: SequenceEmail = { id: id('email'), contact_id: contact.id, step_number: (index + 1) as 1 | 2 | 3, subject, body_html: body, body_text: body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(), original_subject: subject, original_body_html: body };
+        const email: SequenceEmail = { id: id('email'), contact_id: contact.id, step_number: index + 1, subject, body_html: body, body_text: body.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(), original_subject: subject, original_body_html: body };
         db.emails.set(email.id, email);
       });
     }
@@ -213,16 +217,24 @@ export async function saveReviewState(token: string, input: SaveReviewInput, act
     existing.opening_hook = incoming.opening_hook;
     existing.proof_used = incoming.proof_used;
     existing.guardrail = incoming.guardrail;
+    existing.sequence_code = incoming.sequence_code;
+    existing.play_metadata = incoming.play_metadata;
     existing.evidence_urls = incoming.evidence_urls ?? existing.evidence_urls;
     existing.qa_warnings = incoming.qa_warnings ?? existing.qa_warnings;
+    const incomingSteps = new Set(incoming.emails.map((email) => email.step_number));
     for (const email of incoming.emails) {
       const row = emailsForContact(existing.id).find((e) => e.step_number === email.step_number);
       if (!row) throw new Error(`Email step ${email.step_number} not found for ${existing.email}`);
       row.subject = email.subject;
+      row.original_step_number = email.original_step_number ?? row.original_step_number;
+      row.step_label = email.step_label ?? row.step_label;
       row.body_html = email.body_html;
       row.body_text = email.body_text ?? email.body_html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
       row.edited_by = actor;
       row.edited_at = timestamp;
+    }
+    for (const email of emailsForContact(existing.id)) {
+      if (!incomingSteps.has(email.step_number)) db.emails.delete(email.id);
     }
     db.events.push({ id: id('event'), run_id: state.run.id, contact_id: existing.id, actor, event_type: 'review_saved', before_json: before, after_json: clone({ ...existing, emails: emailsForContact(existing.id) }), created_at: timestamp });
   }
@@ -305,6 +317,8 @@ export async function createBatch(input: CreateBatchInput): Promise<Batch & { co
     id: id('batch'),
     source: data.source,
     status: 'queued',
+    play_id: data.play_id,
+    play_metadata: data.play_metadata,
     requested_by: ownerEmail,
     account_id: owner?.account.id,
     created_by_user_id: owner?.user.id,
@@ -330,9 +344,15 @@ export async function listBatchRuns(batchId: string): Promise<BatchRun[]> {
   return clone([...db.batchRuns.values()].filter((r) => r.batch_id === batchId).sort((a, b) => a.created_at.localeCompare(b.created_at)));
 }
 
+function batchCompanyKey(company: { company_name: string; domain?: string }) {
+  const domain = company.domain?.trim().toLowerCase();
+  if (domain) return `domain:${domain}`;
+  return `name:${company.company_name.trim().toLowerCase().replace(/\s+/g, ' ')}`;
+}
+
 export async function attachRunToBatch(batchId: string, runId: string, company: { company_name: string; domain?: string }, status: BatchRun['status'] = 'queued') {
   const timestamp = now();
-  db.batchRuns.set(`${batchId}:${runId}`, { batch_id: batchId, run_id: runId, company_name: company.company_name, domain: company.domain, status, created_at: timestamp, updated_at: timestamp });
+  db.batchRuns.set(`${batchId}:${runId}`, { batch_id: batchId, run_id: runId, company_key: batchCompanyKey(company), company_name: company.company_name, domain: company.domain, status, created_at: timestamp, updated_at: timestamp });
 }
 
 export async function updateBatchStatus(batchId: string, status: Batch['status'], error?: string) {

@@ -9,6 +9,7 @@
     "lint": "eslint . --max-warnings=0",
     "db:setup": "node scripts/setup-db.mjs",
     "db:smoke": "node scripts/smoke-db.mjs",
+    "mcp:schema:verify": "node scripts/verify-mcp-schema.mjs",
     "vercel:env:push": "node scripts/push-vercel-env.mjs .env.local production,preview,development"
   },
   "dependencies": {

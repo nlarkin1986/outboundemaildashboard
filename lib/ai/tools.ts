@@ -53,7 +53,7 @@ function parseLinkedInTitle(result: ExaSearchResult): PeopleResult | null {
   if (!url || !url.includes('linkedin.com/in/')) return null;
   const rawTitle = cleanText(result.title).replace(/\s*\|\s*LinkedIn.*$/i, '');
   if (!rawTitle) return null;
-  const parts = rawTitle.split(/\s+[-–—]\s+/).map((part) => part.trim()).filter(Boolean);
+  const parts = rawTitle.split(/\s+(?:[-–—]|\|)\s+/).map((part) => part.trim()).filter(Boolean);
   const name = parts[0];
   if (!name || /linkedin|profiles|people/i.test(name)) return null;
   return {
@@ -91,6 +91,25 @@ export async function searchWithExa(companyName: string, domain?: string): Promi
       source_url: result.url!,
       source_title: result.title,
       quote_or_fact: cleanText(result.text) || cleanText(result.title) || `Public source found for ${companyName}.`,
+      evidence_type: 'public_fact' as const,
+      confidence: 'medium' as const,
+    }));
+}
+
+export async function searchPublicWeb(query: string, domain?: string, numResults = 5): Promise<ResearchResult[]> {
+  const results = await exaSearch({
+    query,
+    numResults,
+    includeDomains: domain ? [domain] : undefined,
+    contents: { text: { maxCharacters: 1200 } },
+  });
+  if (results.length === 0) return [];
+  return results
+    .filter((result) => result.url)
+    .map((result) => ({
+      source_url: result.url!,
+      source_title: result.title,
+      quote_or_fact: cleanText(result.text) || cleanText(result.title) || `Public source found for ${query}.`,
       evidence_type: 'public_fact' as const,
       confidence: 'medium' as const,
     }));

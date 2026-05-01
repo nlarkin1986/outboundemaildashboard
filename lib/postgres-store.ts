@@ -21,6 +21,8 @@ function toRun(row: any, review_token = ''): Run {
     status: row.status,
     mode: row.mode,
     source: row.source,
+    play_id: row.play_id ?? undefined,
+    play_metadata: row.play_metadata_json ?? undefined,
     account_id: row.account_id ?? undefined,
     created_by_user_id: row.created_by_user_id ?? undefined,
     created_by: row.created_by ?? undefined,
@@ -47,6 +49,8 @@ function toContact(row: any): Contact {
     opening_hook: row.opening_hook ?? undefined,
     proof_used: row.proof_used ?? undefined,
     guardrail: row.guardrail ?? undefined,
+    sequence_code: row.sequence_code ?? undefined,
+    play_metadata: row.play_metadata_json ?? undefined,
     evidence_urls: row.evidence_json ?? [],
     qa_warnings: row.qa_warnings_json ?? [],
   };
@@ -57,6 +61,8 @@ function toEmail(row: any): SequenceEmail {
     id: row.id,
     contact_id: row.contact_id,
     step_number: row.step_number,
+    original_step_number: row.original_step_number ?? undefined,
+    step_label: row.step_label ?? undefined,
     subject: row.subject,
     body_html: row.body_html,
     body_text: row.body_text ?? stripHtml(row.body_html),
@@ -150,9 +156,9 @@ export async function createRun(input: CreateRunInput): Promise<Run & { contacts
 
   return transaction(async (client) => {
     const runResult = await client.query(
-      `insert into runs (id, company_name, domain, status, mode, source, created_by, account_id, created_by_user_id, campaign_id, cowork_thread_id, review_token_hash, created_at, updated_at)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13) returning *`,
-      [runId, data.company_name, data.domain ?? null, 'queued', data.mode, data.source, data.created_by ?? null, data.account_id ?? null, data.created_by_user_id ?? null, data.campaign_id ?? null, data.cowork_thread_id ?? null, tokenHash(token), timestamp],
+      `insert into runs (id, company_name, domain, status, mode, source, play_id, play_metadata_json, created_by, account_id, created_by_user_id, campaign_id, cowork_thread_id, review_token_hash, created_at, updated_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$15) returning *`,
+      [runId, data.company_name, data.domain ?? null, 'queued', data.mode, data.source, data.play_id ?? null, JSON.stringify(data.play_metadata ?? {}), data.created_by ?? null, data.account_id ?? null, data.created_by_user_id ?? null, data.campaign_id ?? null, data.cowork_thread_id ?? null, tokenHash(token), timestamp],
     );
     const contacts: Contact[] = [];
     const seen = new Set<string>();
@@ -160,8 +166,8 @@ export async function createRun(input: CreateRunInput): Promise<Run & { contacts
       if (seen.has(contact.email)) continue;
       seen.add(contact.email);
       const contactResult = await client.query(
-        `insert into contacts (id, run_id, first_name, last_name, title, company, email, domain, status, evidence_json, qa_warnings_json, created_at, updated_at)
-         values ($1,$2,$3,$4,$5,$6,$7,$8,'needs_edit','[]'::jsonb,'[]'::jsonb,$9,$9) returning *`,
+        `insert into contacts (id, run_id, first_name, last_name, title, company, email, domain, status, sequence_code, play_metadata_json, evidence_json, qa_warnings_json, created_at, updated_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,'needs_edit',null,'{}'::jsonb,'[]'::jsonb,'[]'::jsonb,$9,$9) returning *`,
         [id('contact'), runId, contact.first_name ?? null, contact.last_name ?? null, contact.title ?? null, contact.company ?? data.company_name, contact.email, contact.domain ?? data.domain ?? null, timestamp],
       );
       contacts.push(toContact(contactResult.rows[0]));
@@ -257,17 +263,18 @@ export async function saveReviewState(token: string, input: SaveReviewInput, act
       const existing = toContact(existingResult.rows[0]);
       const before = { ...existing, emails: await emailsForContact(existing.id, client) };
       await client.query(
-        `update contacts set status=$2, primary_angle=$3, opening_hook=$4, proof_used=$5, guardrail=$6, evidence_json=$7::jsonb, qa_warnings_json=$8::jsonb, updated_at=$9 where id=$1`,
-        [incoming.id, incoming.status, incoming.primary_angle ?? null, incoming.opening_hook ?? null, incoming.proof_used ?? null, incoming.guardrail ?? null, JSON.stringify(incoming.evidence_urls ?? existing.evidence_urls), JSON.stringify(incoming.qa_warnings ?? existing.qa_warnings), timestamp],
+        `update contacts set status=$2, primary_angle=$3, opening_hook=$4, proof_used=$5, guardrail=$6, sequence_code=$7, play_metadata_json=$8::jsonb, evidence_json=$9::jsonb, qa_warnings_json=$10::jsonb, updated_at=$11 where id=$1`,
+        [incoming.id, incoming.status, incoming.primary_angle ?? null, incoming.opening_hook ?? null, incoming.proof_used ?? null, incoming.guardrail ?? null, incoming.sequence_code ?? null, JSON.stringify(incoming.play_metadata ?? existing.play_metadata ?? {}), JSON.stringify(incoming.evidence_urls ?? existing.evidence_urls), JSON.stringify(incoming.qa_warnings ?? existing.qa_warnings), timestamp],
       );
       for (const email of incoming.emails) {
         const emailResult = await client.query('select * from sequence_emails where contact_id=$1 and step_number=$2', [existing.id, email.step_number]);
         if (!emailResult.rows[0]) throw new Error(`Email step ${email.step_number} not found for ${existing.email}`);
         await client.query(
-          `update sequence_emails set subject=$3, body_html=$4, body_text=$5, edited_by=$6, edited_at=$7, updated_at=$7 where contact_id=$1 and step_number=$2`,
-          [existing.id, email.step_number, email.subject, email.body_html, email.body_text ?? stripHtml(email.body_html), actor, timestamp],
+          `update sequence_emails set subject=$3, body_html=$4, body_text=$5, original_step_number=$6, step_label=$7, edited_by=$8, edited_at=$9, updated_at=$9 where contact_id=$1 and step_number=$2`,
+          [existing.id, email.step_number, email.subject, email.body_html, email.body_text ?? stripHtml(email.body_html), email.original_step_number ?? null, email.step_label ?? null, actor, timestamp],
         );
       }
+      await client.query('delete from sequence_emails where contact_id=$1 and not (step_number = any($2::int[]))', [existing.id, incoming.emails.map((email) => email.step_number)]);
       const afterContactResult = await client.query('select * from contacts where id=$1', [existing.id]);
       const after = { ...toContact(afterContactResult.rows[0]), emails: await emailsForContact(existing.id, client) };
       await insertEvent(client, { run_id: state.run.id, contact_id: existing.id, actor, event_type: 'review_saved', before_json: before, after_json: after, created_at: timestamp });
@@ -348,6 +355,8 @@ function toBatch(row: any, review_token = ''): Batch & { companies: Array<{ comp
     id: row.id,
     source: row.source,
     status: row.status,
+    play_id: row.play_id ?? undefined,
+    play_metadata: row.play_metadata_json ?? undefined,
     requested_by: row.requested_by ?? undefined,
     account_id: row.account_id ?? undefined,
     created_by_user_id: row.created_by_user_id ?? undefined,
@@ -364,7 +373,7 @@ function toBatch(row: any, review_token = ''): Batch & { companies: Array<{ comp
 }
 
 function toBatchRun(row: any): BatchRun {
-  return { batch_id: row.batch_id, run_id: row.run_id, company_name: row.company_name, domain: row.domain ?? undefined, status: row.status, error: row.error ?? undefined, created_at: iso(row.created_at)!, updated_at: iso(row.updated_at)! };
+  return { batch_id: row.batch_id, run_id: row.run_id, company_key: row.company_key ?? undefined, company_name: row.company_name, domain: row.domain ?? undefined, status: row.status, error: row.error ?? undefined, created_at: iso(row.created_at)!, updated_at: iso(row.updated_at)! };
 }
 
 export async function createBatch(input: CreateBatchInput): Promise<Batch & { companies: Array<{ company_name: string; domain?: string; contacts?: any[] }> }> {
@@ -382,9 +391,9 @@ export async function createBatch(input: CreateBatchInput): Promise<Batch & { co
   const timestamp = now();
   const reviewUrl = reviewUrlForBatchTokenLocal(token);
   const result = await query(
-    `insert into batches (id, source, status, requested_by, account_id, created_by_user_id, cowork_thread_id, campaign_id, mode, review_token_hash, review_url, companies_json, created_at, updated_at)
-     values ($1,$2,'queued',$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,$12) returning *`,
-    [id('batch'), data.source, ownerEmail ?? null, owner?.account.id ?? null, owner?.user.id ?? null, data.cowork_thread_id ?? null, data.campaign_id ?? null, data.mode, tokenHash(token), reviewUrl, JSON.stringify(data.companies), timestamp],
+    `insert into batches (id, source, status, play_id, play_metadata_json, requested_by, account_id, created_by_user_id, cowork_thread_id, campaign_id, mode, review_token_hash, review_url, companies_json, created_at, updated_at)
+     values ($1,$2,'queued',$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$14) returning *`,
+    [id('batch'), data.source, data.play_id ?? null, JSON.stringify(data.play_metadata ?? {}), ownerEmail ?? null, owner?.account.id ?? null, owner?.user.id ?? null, data.cowork_thread_id ?? null, data.campaign_id ?? null, data.mode, tokenHash(token), reviewUrl, JSON.stringify(data.companies), timestamp],
   );
   return clone(toBatch(result.rows[0], token));
 }
@@ -399,11 +408,18 @@ export async function listBatchRuns(batchId: string): Promise<BatchRun[]> {
   return result.rows.map(toBatchRun);
 }
 
+function batchCompanyKey(company: { company_name: string; domain?: string }) {
+  const domain = company.domain?.trim().toLowerCase();
+  if (domain) return `domain:${domain}`;
+  return `name:${company.company_name.trim().toLowerCase().replace(/\s+/g, ' ')}`;
+}
+
 export async function attachRunToBatch(batchId: string, runId: string, company: { company_name: string; domain?: string }, status: BatchRun['status'] = 'queued') {
   await query(
-    `insert into batch_runs (batch_id, run_id, company_name, domain, status, created_at, updated_at)
-     values ($1,$2,$3,$4,$5,$6,$6) on conflict (batch_id, run_id) do update set status=excluded.status, updated_at=excluded.updated_at`,
-    [batchId, runId, company.company_name, company.domain ?? null, status, now()],
+    `insert into batch_runs (batch_id, run_id, company_key, company_name, domain, status, created_at, updated_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$7)
+     on conflict (batch_id, run_id) do update set company_key=excluded.company_key, status=excluded.status, updated_at=excluded.updated_at`,
+    [batchId, runId, batchCompanyKey(company), company.company_name, company.domain ?? null, status, now()],
   );
 }
 
@@ -450,12 +466,13 @@ export async function saveBatchReviewState(token: string, input: SaveBatchReview
     // Save directly without needing original single-run token.
     await transaction(async (client) => {
       for (const incoming of runInput.contacts) {
-        const contactUpdate = await client.query(`update contacts set status=$2, primary_angle=$3, opening_hook=$4, proof_used=$5, guardrail=$6, evidence_json=$7::jsonb, qa_warnings_json=$8::jsonb, updated_at=$9 where id=$1 and run_id=$10`, [incoming.id, incoming.status, incoming.primary_angle ?? null, incoming.opening_hook ?? null, incoming.proof_used ?? null, incoming.guardrail ?? null, JSON.stringify(incoming.evidence_urls ?? []), JSON.stringify(incoming.qa_warnings ?? []), now(), runInput.run_id]);
+        const contactUpdate = await client.query(`update contacts set status=$2, primary_angle=$3, opening_hook=$4, proof_used=$5, guardrail=$6, sequence_code=$7, play_metadata_json=$8::jsonb, evidence_json=$9::jsonb, qa_warnings_json=$10::jsonb, updated_at=$11 where id=$1 and run_id=$12`, [incoming.id, incoming.status, incoming.primary_angle ?? null, incoming.opening_hook ?? null, incoming.proof_used ?? null, incoming.guardrail ?? null, incoming.sequence_code ?? null, JSON.stringify(incoming.play_metadata ?? {}), JSON.stringify(incoming.evidence_urls ?? []), JSON.stringify(incoming.qa_warnings ?? []), now(), runInput.run_id]);
         if (contactUpdate.rowCount !== 1) throw new Error(`Contact ${incoming.id} does not belong to batch run ${runInput.run_id}`);
         for (const email of incoming.emails) {
-          const emailUpdate = await client.query(`update sequence_emails set subject=$3, body_html=$4, body_text=$5, edited_by=$6, edited_at=$7, updated_at=$7 where contact_id=$1 and step_number=$2`, [incoming.id, email.step_number, email.subject, email.body_html, email.body_text ?? stripHtml(email.body_html), actor, now()]);
+          const emailUpdate = await client.query(`update sequence_emails set subject=$3, body_html=$4, body_text=$5, original_step_number=$6, step_label=$7, edited_by=$8, edited_at=$9, updated_at=$9 where contact_id=$1 and step_number=$2`, [incoming.id, email.step_number, email.subject, email.body_html, email.body_text ?? stripHtml(email.body_html), email.original_step_number ?? null, email.step_label ?? null, actor, now()]);
           if (emailUpdate.rowCount !== 1) throw new Error(`Email step ${email.step_number} not found for contact ${incoming.id}`);
         }
+        await client.query('delete from sequence_emails where contact_id=$1 and not (step_number = any($2::int[]))', [incoming.id, incoming.emails.map((email) => email.step_number)]);
       }
     });
   }

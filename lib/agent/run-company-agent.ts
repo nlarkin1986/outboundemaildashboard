@@ -1,4 +1,4 @@
-import type { ContactInput } from '@/lib/schemas';
+import type { BatchContactInput, ContactInput } from '@/lib/schemas';
 import type { CompanyInput } from '@/lib/schemas';
 import { findPeopleWithExa, searchWithExa } from '@/lib/ai/tools';
 import type { CompanyAgentOutput } from './schemas';
@@ -17,6 +17,10 @@ function splitName(name: string) {
 
 function missingContactWarning() {
   return 'No verified contact email supplied; candidate is non-pushable until a real email is added.';
+}
+
+function hasEmail(contact: BatchContactInput): contact is ContactInput {
+  return typeof contact.email === 'string' && contact.email.length > 0;
 }
 
 function contactFromCandidate(company: CompanyInput, candidate: { name: string; title?: string; linkedin_url?: string }, index: number): ContactInput {
@@ -41,7 +45,7 @@ function emailsForContact(companyName: string, first: string) {
 export async function runCompanyAgent({ company, targetPersona }: { company: CompanyInput; targetPersona?: string }): Promise<CompanyAgentOutput> {
   const research = await searchWithExa(company.company_name, company.domain);
   const people = (company.contacts?.length ?? 0) > 0 ? [] : await findPeopleWithExa(company.company_name, company.domain, targetPersona);
-  const inputContacts = company.contacts?.length ? company.contacts : people.map((candidate, index) => contactFromCandidate(company, candidate, index));
+  const inputContacts: ContactInput[] = company.contacts?.length ? company.contacts.filter(hasEmail) : people.map((candidate, index) => contactFromCandidate(company, candidate, index));
   const peopleByEmail = new Map(inputContacts.map((contact, index) => [contact.email.toLowerCase(), people[index]]));
 
   const evidence_ledger = [

@@ -1,7 +1,9 @@
 import { runCompanyAgent } from '@/lib/agent/run-company-agent';
-import { attachRunToBatch, createRun, getBatchById, recordCoworkMessage, reviewUrlForBatchToken, saveResearchArtifact, saveReviewState, updateBatchRunStatus, updateBatchStatus } from '@/lib/store';
+import { runBdrPlayWorkflow } from '@/lib/plays/bdr/workflow-runner';
+import { BDR_PLAY_ID } from '@/lib/plays/bdr/types';
+import { attachRunToBatch, createRun, getBatchById, listBatchRuns, recordCoworkMessage, reviewUrlForBatchToken, saveResearchArtifact, saveReviewState, updateBatchRunStatus, updateBatchStatus } from '@/lib/store';
 import { postCoworkBatchReady } from '@/lib/cowork/client';
-import type { CompanyInput } from '@/lib/schemas';
+import type { BatchContactInput, CompanyInput, ContactInput } from '@/lib/schemas';
 
 function slug(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'company';
@@ -18,19 +20,62 @@ function placeholderContact(company: CompanyInput) {
   };
 }
 
+function splitName(contact: BatchContactInput) {
+  if (contact.first_name || contact.last_name) return { first_name: contact.first_name, last_name: contact.last_name };
+  const parts = contact.name?.trim().split(/\s+/).filter(Boolean) ?? [];
+  return { first_name: parts[0], last_name: parts.length > 1 ? parts.slice(1).join(' ') : undefined };
+}
+
+function normalizeBatchContact(company: CompanyInput, contact: BatchContactInput, index: number): ContactInput {
+  const names = splitName(contact);
+  return {
+    first_name: names.first_name,
+    last_name: names.last_name,
+    title: contact.title,
+    company: contact.company ?? company.company_name,
+    email: contact.email ?? `missing-contact-${index + 1}+${slug(company.company_name)}@example.invalid`,
+    domain: contact.domain ?? company.domain,
+  };
+}
+
+function batchCompanyKey(company: CompanyInput) {
+  const domain = company.domain?.trim().toLowerCase();
+  if (domain) return `domain:${domain}`;
+  return `name:${company.company_name.trim().toLowerCase().replace(/\s+/g, ' ')}`;
+}
+
 export async function processBatch(batchId: string) {
   const batch = await getBatchById(batchId);
   if (!batch) throw new Error(`Batch not found: ${batchId}`);
   await updateBatchStatus(batchId, 'processing');
 
   let failures = 0;
+  let pending = 0;
+  const existingRuns = new Map((await listBatchRuns(batchId)).map((run) => [run.company_key ?? batchCompanyKey(run), run]));
   for (const company of batch.companies) {
+    const companyKey = batchCompanyKey(company);
+    const existing = existingRuns.get(companyKey);
+    if (existing?.status === 'ready_for_review') continue;
+    if (existing?.status === 'failed') {
+      failures += 1;
+      continue;
+    }
+    if (existing) {
+      pending += 1;
+      continue;
+    }
+
     let runId = '';
     try {
       const hasContacts = (company.contacts?.length ?? 0) > 0;
-      const agentOutput = await runCompanyAgent({ company, targetPersona: undefined });
+      const normalizedInputContacts = hasContacts ? company.contacts!.map((contact, index) => normalizeBatchContact(company, contact, index)) : undefined;
+      const companyForAgent = normalizedInputContacts ? { ...company, contacts: normalizedInputContacts } : company;
+      const bdrWorkflow = batch.play_id === BDR_PLAY_ID
+        ? await runBdrPlayWorkflow({ company })
+        : undefined;
+      const agentOutput = bdrWorkflow?.output ?? await runCompanyAgent({ company: companyForAgent, targetPersona: undefined });
       const runContacts = hasContacts
-        ? company.contacts!
+        ? normalizedInputContacts!
         : agentOutput.contacts.length
           ? agentOutput.contacts.map((contact) => ({
             first_name: contact.first_name,
@@ -49,13 +94,27 @@ export async function processBatch(batchId: string) {
         cowork_thread_id: batch.cowork_thread_id,
         mode: batch.mode,
         source: 'cowork',
+        play_id: batch.play_id,
+        play_metadata: batch.play_metadata,
         account_id: batch.account_id,
         created_by_user_id: batch.created_by_user_id,
         created_by: batch.requested_by,
       });
       runId = run.id;
       await attachRunToBatch(batchId, run.id, company, 'researching');
-      await saveResearchArtifact(run.id, { company_name: company.company_name, domain: company.domain, core_hypothesis: agentOutput.core_hypothesis, evidence_ledger: agentOutput.evidence_ledger, source_urls: agentOutput.evidence_ledger.map((e) => e.source_url).filter(Boolean) as string[], raw_summary: agentOutput });
+      existingRuns.set(companyKey, { batch_id: batchId, run_id: run.id, company_key: companyKey, company_name: company.company_name, domain: company.domain, status: 'researching', created_at: run.created_at, updated_at: run.updated_at });
+      await saveResearchArtifact(run.id, {
+        company_name: company.company_name,
+        domain: company.domain,
+        core_hypothesis: agentOutput.core_hypothesis,
+        evidence_ledger: agentOutput.evidence_ledger,
+        source_urls: agentOutput.evidence_ledger.map((e) => e.source_url).filter(Boolean) as string[],
+        raw_summary: bdrWorkflow ? {
+          output: agentOutput,
+          sequence_plans: bdrWorkflow.sequence_plans,
+          placeholder_research: bdrWorkflow.placeholder_research,
+        } : agentOutput,
+      });
       await updateBatchRunStatus(batchId, run.id, 'writing');
       const state = await import('@/lib/store').then((store) => store.generateDraftForRun(run.id));
       const agentContactsByEmail = new Map(agentOutput.contacts.map((contact) => [contact.email.toLowerCase(), contact]));
@@ -73,11 +132,21 @@ export async function processBatch(batchId: string) {
             opening_hook: agentContact.opening_hook,
             proof_used: agentContact.proof_used,
             guardrail: agentContact.guardrail,
+            sequence_code: agentContact.sequence_code,
+            play_metadata: agentContact.play_metadata,
             evidence_urls: agentContact.evidence_urls,
             qa_warnings: agentContact.qa_warnings,
-            emails: contact.emails.map((email) => {
-              const agentEmail = agentContact.emails.find((candidate) => candidate.step_number === email.step_number);
-              return agentEmail ? { ...email, subject: agentEmail.subject, body_html: agentEmail.body_html, body_text: agentEmail.body_text } : email;
+            emails: agentContact.emails.map((agentEmail) => {
+              const existingEmail = contact.emails.find((candidate) => candidate.step_number === agentEmail.step_number);
+              return {
+                ...(existingEmail ?? { id: undefined, contact_id: contact.id, original_subject: agentEmail.subject, original_body_html: agentEmail.body_html }),
+                step_number: agentEmail.step_number,
+                original_step_number: agentEmail.original_step_number,
+                step_label: agentEmail.step_label,
+                subject: agentEmail.subject,
+                body_html: agentEmail.body_html,
+                body_text: agentEmail.body_text,
+              };
             }),
           };
         }),
@@ -89,8 +158,10 @@ export async function processBatch(batchId: string) {
     }
   }
 
-  await updateBatchStatus(batchId, failures ? 'partially_failed' : 'ready_for_review');
+  const finalStatus = pending ? 'processing' : failures ? 'partially_failed' : 'ready_for_review';
+  await updateBatchStatus(batchId, finalStatus);
   const reviewUrl = batch.review_url || reviewUrlForBatchToken(batch.review_token);
+  if (pending) return { ok: true as const, batch_id: batchId, status: finalStatus, review_url: reviewUrl, failures };
   let message;
   try {
     message = await postCoworkBatchReady({ batchId, threadId: batch.cowork_thread_id, reviewUrl });
@@ -98,5 +169,5 @@ export async function processBatch(batchId: string) {
     message = { status: 'failed' as const, error: error instanceof Error ? error.message : String(error) };
   }
   await recordCoworkMessage({ batch_id: batchId, thread_id: batch.cowork_thread_id, direction: 'outbound', status: message.status, payload: { text: `Your outbound dashboard is ready: ${reviewUrl}`, review_url: reviewUrl, account_id: batch.account_id, created_by_user_id: batch.created_by_user_id, created_by: batch.requested_by }, response: message.response, error: message.error });
-  return { ok: true as const, batch_id: batchId, status: failures ? 'partially_failed' : 'ready_for_review', review_url: reviewUrl, failures };
+  return { ok: true as const, batch_id: batchId, status: finalStatus, review_url: reviewUrl, failures };
 }
