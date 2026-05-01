@@ -28,8 +28,61 @@ export type BdrSequenceSelection = {
   warnings: string[];
 };
 
+export type BdrLookupKey = BdrSequenceTemplate['step1']['lookup'] | BdrSequenceTemplate['step4']['lookup'];
+export type BdrEvidenceType = 'product' | 'help_center' | 'jobs' | 'press' | 'reviews' | 'social' | 'inference';
+
+export type BdrPersonalizationInsert = {
+  selected_insert?: string;
+  confidence: 'high' | 'medium' | 'low';
+  evidence_type: BdrEvidenceType;
+  verified_fact?: string;
+  inference_used?: string;
+  source_url?: string;
+  source_snippet?: string;
+  fallback_used: boolean;
+  warning?: string;
+};
+
+export type BdrSequencePlan = {
+  contact_key: string;
+  sequence?: BdrSequenceSelection;
+  sequence_code?: BdrSequenceCode;
+  confidence: 'high' | 'medium' | 'low';
+  required_lookups: BdrLookupKey[];
+  evidence_urls: string[];
+  evidence_claims: string[];
+  warnings: string[];
+};
+
+export type BdrPlaceholderResearch = {
+  sequence_code: BdrSequenceCode;
+  step1: {
+    lookup: BdrSequenceTemplate['step1']['lookup'];
+    value?: string;
+    insert?: BdrPersonalizationInsert;
+    evidence_urls: string[];
+    warning?: string;
+  };
+  step4: {
+    lookup: BdrSequenceTemplate['step4']['lookup'];
+    value?: string;
+    insert?: BdrPersonalizationInsert;
+    evidence_urls: string[];
+    warning?: string;
+  };
+  account_evidence_urls: string[];
+  account_evidence_claims: string[];
+  warnings: string[];
+};
+
 export type BdrTemplateVariant = {
   body: string;
+};
+
+export type BdrLinkedInTemplate = {
+  label: string;
+  note: string;
+  max_length: number;
 };
 
 export type BdrSequenceTemplate = {
@@ -42,7 +95,9 @@ export type BdrSequenceTemplate = {
     lookup: 'hero_product' | 'complex_product' | 'digital_signal' | 'subscription_signal';
     body: string;
     fallback_body?: string;
+    insert_rule?: string;
   };
+  linkedin?: BdrLinkedInTemplate;
   step4: {
     subject: string;
     label: string;

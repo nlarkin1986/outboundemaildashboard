@@ -6,20 +6,25 @@ The first play-specific workflow is `bdr_cold_outbound`. It is intentionally exp
 
 When a BDR asks to "sequence this account" or names a company plus contacts/titles, the host agent should:
 
-1. Confirm the BDR cold outbound play only when intent is ambiguous.
-2. Collect missing company, domain when known, contact name, contact title, optional email, and campaign target information.
-3. Call `create_outbound_sequence` with `play_id: "bdr_cold_outbound"`.
+1. Ask: "Do you want to run a fully custom sequence or the BDR outreach sequence play?"
+2. If the user selects the BDR outreach sequence play, ask: "Do you have a CSV, or are you pasting in account names?"
+3. Parse the selected input format for company, domain when known, any supplied contact details, optional email, and campaign target information.
+4. Call `create_outbound_sequence` with `play_id: "bdr_cold_outbound"`.
 
 In the common path, ask no more than two follow-up turns before creating the batch.
+
+Cowork determines that the user wants the BDR play. The Vercel-side BDR workflow can discover contact/persona candidates when Cowork only supplies the company, then determines the specific sequence code and runs the research needed to fill that selected sequence.
+
+If the user selects a fully custom sequence, do not set `play_id`. The current generic/custom research-to-sequence path is represented by omitting `play_id`.
 
 ## Required inputs
 
 - `actor.email`
 - `play_id: "bdr_cold_outbound"`
 - At least one company with `company_name`
-- Contact titles for any contact that should be mapped to a BDR sequence
+- Contact titles when Cowork already has them
 
-Contact emails are optional for review-only drafting. Contacts without real emails are created with `example.invalid` placeholder emails and cannot be pushed to Instantly until a real email is supplied.
+Contact names, titles, and emails are optional for review-only drafting. If they are missing, the BDR workflow searches for public CX/support/eCommerce/digital candidates. Contacts without real emails are created with `example.invalid` placeholder emails and cannot be pushed to Instantly until a real email is supplied.
 
 ## Example MCP call
 
@@ -27,6 +32,15 @@ Contact emails are optional for review-only drafting. Contacts without real emai
 {
   "actor": { "email": "bdr@example.com", "cowork_thread_id": "thread-123" },
   "play_id": "bdr_cold_outbound",
+  "play_metadata": {
+    "intake": {
+      "user_request_summary": "Sequence Kizik contacts through the BDR play.",
+      "confirmed_play": "bdr_cold_outbound",
+      "known_missing_fields": ["email"],
+      "input_format": "pasted_accounts",
+      "push_intent": "review_first"
+    }
+  },
   "campaign_id": "camp_paused_review",
   "companies": [
     {
@@ -49,6 +63,11 @@ Contact emails are optional for review-only drafting. Contacts without real emai
 ```
 
 ## Review output
+
+BDR generation runs in two passes:
+
+1. Sequence planning: account/category and contact-title research selects the BDR sequence code or produces a warning-only mapping.
+2. Placeholder research: only the selected Step 1 / Step 4 lookup needs are researched and substituted into the controlled templates.
 
 The review UI shows the original BDR play step labels:
 

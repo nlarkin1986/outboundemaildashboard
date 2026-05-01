@@ -26,6 +26,15 @@ function emailDisplayLabel(email: ReviewContact['emails'][number]) {
   return email.step_label ?? `Email ${email.step_number}`;
 }
 
+function linkedinNote(contact: ReviewContact) {
+  const value = contact.play_metadata?.linkedin_note;
+  if (!value || typeof value !== 'object') return undefined;
+  const note = (value as { note?: unknown; label?: unknown }).note;
+  const label = (value as { note?: unknown; label?: unknown }).label;
+  if (typeof note !== 'string' || !note.trim()) return undefined;
+  return { note, label: typeof label === 'string' ? label : 'LinkedIn connection note' };
+}
+
 export function ReviewApp({ initialState, token }: { initialState: ReviewState; token: string }) {
   const [state, setState] = useState(() => normalizeReviewStateForEditing(initialState));
   const [selectedId, setSelectedId] = useState(initialState.contacts[0]?.id);
@@ -34,6 +43,7 @@ export function ReviewApp({ initialState, token }: { initialState: ReviewState; 
   const [message, setMessage] = useState('No Instantly push has been made yet.');
   const [popup, setPopup] = useState<string | null>(null);
   const selected = state.contacts.find((c) => c.id === selectedId) ?? state.contacts[0];
+  const selectedLinkedInNote = selected ? linkedinNote(selected) : undefined;
 
   const counts = useMemo(() => ({
     total: state.contacts.length,
@@ -225,6 +235,7 @@ export function ReviewApp({ initialState, token }: { initialState: ReviewState; 
               <label>Guardrail<textarea value={selected.guardrail ?? ''} onChange={(e) => updateContact(selected.id, { guardrail: e.target.value })} /></label>
             </div>
             {selected.qa_warnings.length ? <div className="warningCallout">{selected.qa_warnings.join(', ')}</div> : <div className="okCallout">This draft has no QA warnings. Confirm evidence still matches the outbound claim.</div>}
+            {selectedLinkedInNote ? <div className="warningCallout"><strong>{selectedLinkedInNote.label}:</strong> {selectedLinkedInNote.note}</div> : null}
           </div>
 
           <div className="emailStack" id="emails">

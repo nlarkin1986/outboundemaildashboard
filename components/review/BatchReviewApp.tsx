@@ -22,6 +22,15 @@ function emailDisplayLabel(email: ReviewContact['emails'][number]) {
   return email.step_label ?? `Email ${email.step_number}`;
 }
 
+function linkedinNote(contact: ReviewContact) {
+  const value = contact.play_metadata?.linkedin_note;
+  if (!value || typeof value !== 'object') return undefined;
+  const note = (value as { note?: unknown; label?: unknown }).note;
+  const label = (value as { note?: unknown; label?: unknown }).label;
+  if (typeof note !== 'string' || !note.trim()) return undefined;
+  return { note, label: typeof label === 'string' ? label : 'LinkedIn connection note' };
+}
+
 export function BatchReviewApp({ initialState, token }: { initialState: BatchReviewState; token: string }) {
   const [state, setState] = useState(() => normalizeBatchReviewStateForEditing(initialState));
   const firstContact = state.runs.flatMap((r) => r.review.contacts.map((c) => ({ runId: r.run_id, contactId: c.id }))).at(0);
@@ -30,6 +39,7 @@ export function BatchReviewApp({ initialState, token }: { initialState: BatchRev
   const [popup, setPopup] = useState<string | null>(null);
   const selectedRun = state.runs.find((r) => r.run_id === selected?.runId) ?? state.runs[0];
   const selectedContact = selectedRun?.review.contacts.find((c) => c.id === selected?.contactId) ?? selectedRun?.review.contacts[0];
+  const selectedLinkedInNote = selectedContact ? linkedinNote(selectedContact) : undefined;
 
   const counts = useMemo(() => {
     const contacts = state.runs.flatMap((r) => r.review.contacts);
@@ -187,6 +197,7 @@ export function BatchReviewApp({ initialState, token }: { initialState: BatchRev
               <label>Guardrail<textarea value={selectedContact.guardrail ?? ''} onChange={(e) => updateContact(selectedRun.run_id, selectedContact.id, { guardrail: e.target.value })} /></label>
             </div>
             {selectedContact.qa_warnings.length ? <div className="warningCallout">{selectedContact.qa_warnings.join(', ')}</div> : null}
+            {selectedLinkedInNote ? <div className="warningCallout"><strong>{selectedLinkedInNote.label}:</strong> {selectedLinkedInNote.note}</div> : null}
           </div>
           <div className="emailStack">
             {selectedContact.emails.map((email) => <div className="reviewCard emailCard" key={email.id}>

@@ -53,7 +53,7 @@ function parseLinkedInTitle(result: ExaSearchResult): PeopleResult | null {
   if (!url || !url.includes('linkedin.com/in/')) return null;
   const rawTitle = cleanText(result.title).replace(/\s*\|\s*LinkedIn.*$/i, '');
   if (!rawTitle) return null;
-  const parts = rawTitle.split(/\s+[-–—]\s+/).map((part) => part.trim()).filter(Boolean);
+  const parts = rawTitle.split(/\s+(?:[-–—]|\|)\s+/).map((part) => part.trim()).filter(Boolean);
   const name = parts[0];
   if (!name || /linkedin|profiles|people/i.test(name)) return null;
   return {

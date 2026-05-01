@@ -1,5 +1,5 @@
 import { runCompanyAgent } from '@/lib/agent/run-company-agent';
-import { runBdrPlayAgent } from '@/lib/plays/bdr/run-bdr-play-agent';
+import { runBdrPlayWorkflow } from '@/lib/plays/bdr/workflow-runner';
 import { BDR_PLAY_ID } from '@/lib/plays/bdr/types';
 import { attachRunToBatch, createRun, getBatchById, listBatchRuns, recordCoworkMessage, reviewUrlForBatchToken, saveResearchArtifact, saveReviewState, updateBatchRunStatus, updateBatchStatus } from '@/lib/store';
 import { postCoworkBatchReady } from '@/lib/cowork/client';
@@ -70,9 +70,10 @@ export async function processBatch(batchId: string) {
       const hasContacts = (company.contacts?.length ?? 0) > 0;
       const normalizedInputContacts = hasContacts ? company.contacts!.map((contact, index) => normalizeBatchContact(company, contact, index)) : undefined;
       const companyForAgent = normalizedInputContacts ? { ...company, contacts: normalizedInputContacts } : company;
-      const agentOutput = batch.play_id === BDR_PLAY_ID
-        ? await runBdrPlayAgent({ company })
-        : await runCompanyAgent({ company: companyForAgent, targetPersona: undefined });
+      const bdrWorkflow = batch.play_id === BDR_PLAY_ID
+        ? await runBdrPlayWorkflow({ company })
+        : undefined;
+      const agentOutput = bdrWorkflow?.output ?? await runCompanyAgent({ company: companyForAgent, targetPersona: undefined });
       const runContacts = hasContacts
         ? normalizedInputContacts!
         : agentOutput.contacts.length
@@ -102,7 +103,18 @@ export async function processBatch(batchId: string) {
       runId = run.id;
       await attachRunToBatch(batchId, run.id, company, 'researching');
       existingRuns.set(companyKey, { batch_id: batchId, run_id: run.id, company_key: companyKey, company_name: company.company_name, domain: company.domain, status: 'researching', created_at: run.created_at, updated_at: run.updated_at });
-      await saveResearchArtifact(run.id, { company_name: company.company_name, domain: company.domain, core_hypothesis: agentOutput.core_hypothesis, evidence_ledger: agentOutput.evidence_ledger, source_urls: agentOutput.evidence_ledger.map((e) => e.source_url).filter(Boolean) as string[], raw_summary: agentOutput });
+      await saveResearchArtifact(run.id, {
+        company_name: company.company_name,
+        domain: company.domain,
+        core_hypothesis: agentOutput.core_hypothesis,
+        evidence_ledger: agentOutput.evidence_ledger,
+        source_urls: agentOutput.evidence_ledger.map((e) => e.source_url).filter(Boolean) as string[],
+        raw_summary: bdrWorkflow ? {
+          output: agentOutput,
+          sequence_plans: bdrWorkflow.sequence_plans,
+          placeholder_research: bdrWorkflow.placeholder_research,
+        } : agentOutput,
+      });
       await updateBatchRunStatus(batchId, run.id, 'writing');
       const state = await import('@/lib/store').then((store) => store.generateDraftForRun(run.id));
       const agentContactsByEmail = new Map(agentOutput.contacts.map((contact) => [contact.email.toLowerCase(), contact]));

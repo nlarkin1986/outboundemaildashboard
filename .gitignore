@@ -4,5 +4,11 @@ node_modules
 .env
 coverage
 .vercel
+dist
+.hermes
+.playwright-mcp
+bdr-play-overview.html
+cowork-batch-approval-architecture.html
+design.txt
 tsconfig.tsbuildinfo
 *.tsbuildinfo

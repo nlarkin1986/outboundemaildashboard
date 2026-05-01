@@ -34,7 +34,7 @@ describe('BDR play agent', () => {
     expect(contact.emails[0]).toMatchObject({ original_step_number: 1, step_label: 'Step 1: Email · peer story' });
     expect(contact.emails[1]).toMatchObject({ original_step_number: 4, step_label: 'Step 4: Email · benchmarks / data' });
     expect(contact.emails[0].body_text).toContain('Prague hands-free sneaker');
-    expect(contact.emails[1].body_text).toContain('sizing questions showing up');
+    expect(contact.emails[1].body_text).toContain('customers mention fit and sizing questions in public reviews');
     expect(researchProvider.heroProduct).toHaveBeenCalled();
     expect(researchProvider.reviewPattern).toHaveBeenCalled();
     expect(contact.qa_warnings).toEqual([]);

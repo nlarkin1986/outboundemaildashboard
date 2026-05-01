@@ -66,4 +66,33 @@ describe('mcp outbound sequence tools', () => {
     expect(status.run_counts.ready_for_review).toBe(1);
     expect(status.run_counts.failed).toBe(0);
   });
+
+  it('preserves BDR intake metadata while keeping status responses sanitized', async () => {
+    const result = await createOutboundSequence({
+      actor: { email: 'bdr@company.com', cowork_thread_id: 'thread-bdr' },
+      play_id: 'bdr_cold_outbound',
+      play_metadata: {
+        intake: {
+          user_request_summary: 'Sequence Kizik contacts through the BDR play.',
+          confirmed_play: 'bdr_cold_outbound',
+          known_missing_fields: ['email'],
+          push_intent: 'review_first',
+        },
+      },
+      companies: [{
+        company_name: 'Kizik',
+        domain: 'kizik.com',
+        contacts: [{ name: 'Alex Morgan', title: 'VP of Customer Experience' }],
+      }],
+      mode: 'fast',
+    });
+
+    expect(result.play_id).toBe('bdr_cold_outbound');
+    await processBatch(result.batch_id);
+
+    const status = await getOutboundSequenceStatus({ batch_id: result.batch_id, actor: { email: 'bdr@company.com' } });
+    expect(status.play_id).toBe('bdr_cold_outbound');
+    expect(status.status).toBe('ready_for_review');
+    expect(JSON.stringify(status)).not.toMatch(/user_request_summary|known_missing_fields|sequence_plans|placeholder_research/i);
+  });
 });

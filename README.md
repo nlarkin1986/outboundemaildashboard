@@ -188,6 +188,8 @@ The response includes `batch_id`, `review_url`, and `process_url`. Company-only 
 
 The first play-specific path uses `play_id: "bdr_cold_outbound"`. It reuses the same batch approval flow, but routes processing through the BDR play for retail/ecommerce account sequencing. The plugin or Cowork host should ask at most two follow-up turns before calling the tool: one to confirm the BDR play if intent is ambiguous, and one to collect missing company/domain/contact/title/campaign details.
 
+Cowork determines the play; the app determines the contacts, sequence, and placeholders. If Cowork only supplies a company, BDR processing searches for public CX/support/eCommerce/digital candidates, runs a sequence-planning pass, then researches only the placeholders required by the selected Step 1 and Step 4 templates before writing drafts into review.
+
 ```bash
 curl -X POST "$APP_BASE_URL/api/mcp" \
   -H "Content-Type: application/json" \
@@ -197,6 +199,7 @@ curl -X POST "$APP_BASE_URL/api/mcp" \
     "input":{
       "actor":{"email":"bdr@example.com","cowork_thread_id":"thread-123"},
       "play_id":"bdr_cold_outbound",
+      "play_metadata":{"intake":{"user_request_summary":"Sequence Kizik contacts through the BDR play.","confirmed_play":"bdr_cold_outbound","push_intent":"review_first"}},
       "campaign_id":"camp_test",
       "companies":[{
         "company_name":"Kizik",
