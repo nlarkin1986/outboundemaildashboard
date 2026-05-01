@@ -48,6 +48,22 @@ describe('readiness configuration', () => {
     expect(bdrDocs).toContain('no more than two follow-up turns');
   });
 
+  it('documents and scripts live MCP schema verification for BDR routing', () => {
+    const packageJson = read('package.json');
+    const verifier = read('scripts/verify-mcp-schema.mjs');
+    const readme = read('README.md');
+
+    expect(packageJson).toContain('mcp:schema:verify');
+    expect(verifier).toContain('/api/mcp');
+    expect(verifier).toContain('tools/list');
+    expect(verifier).toContain('play_id');
+    expect(verifier).toContain('play_metadata');
+    expect(verifier).toContain('bdr_cold_outbound');
+    expect(readme).toContain('npm run mcp:schema:verify');
+    expect(readme).toContain('play_id');
+    expect(readme).toContain('play_metadata');
+  });
+
   it('fails database smoke checks before connecting when DATABASE_URL is missing or malformed', () => {
     const script = resolve(root, 'scripts/smoke-db.mjs');
     const cwd = mkdtempSync(join(tmpdir(), 'outbound-smoke-'));

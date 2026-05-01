@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 
 const root = resolve(__dirname, '..');
@@ -71,5 +72,20 @@ describe('account sequencer skill source', () => {
       expect(text).toContain('bdr_cold_outbound');
       expect(text).toMatch(/fully custom[\s\S]{0,220}do not set `play_id`/i);
     }
+  });
+
+  it('keeps the packaged skill artifact aligned with repo source', () => {
+    const artifact = resolve(root, 'dist/account-sequencer.skill');
+    expect(existsSync(artifact)).toBe(true);
+
+    const packagedSkill = spawnSync('unzip', ['-p', artifact, 'account-sequencer/SKILL.md'], { encoding: 'utf8' });
+    const packagedPolling = spawnSync('unzip', ['-p', artifact, 'account-sequencer/references/polling.md'], { encoding: 'utf8' });
+
+    expect(packagedSkill.status).toBe(0);
+    expect(packagedPolling.status).toBe(0);
+    expect(packagedSkill.stdout).toBe(read('skills/account-sequencer/SKILL.md'));
+    expect(packagedPolling.stdout).toBe(read('skills/account-sequencer/references/polling.md'));
+    expect(packagedSkill.stdout).toContain('"play_id": "bdr_cold_outbound"');
+    expect(packagedPolling.stdout).toContain('max_poll_attempts');
   });
 });

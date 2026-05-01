@@ -85,6 +85,27 @@ describe('mcp route protocol compatibility', () => {
     });
   });
 
+  it('rejects unknown play ids instead of creating generic fallback batches', async () => {
+    const response = await POST(request({
+      jsonrpc: '2.0',
+      id: 6,
+      method: 'tools/call',
+      params: {
+        name: 'create_outbound_sequence',
+        arguments: {
+          actor: { email: 'bdr@company.com', cowork_thread_id: 'thread-bdr' },
+          play_id: 'other_play',
+          companies: [{ company_name: 'Gruns', domain: 'gruns.co' }],
+        },
+      },
+    }));
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.result.isError).toBe(true);
+    expect(body.result.structuredContent.error).toMatch(/play_id/i);
+  });
+
   it('keeps direct non-JSON-RPC tool invocation compatible', async () => {
     const response = await POST(request({
       tool: 'create_outbound_sequence',
@@ -103,7 +124,7 @@ describe('mcp route protocol compatibility', () => {
   it('accepts the account-sequencer BDR and fully custom route shapes', async () => {
     const bdrResponse = await POST(request({
       jsonrpc: '2.0',
-      id: 6,
+      id: 7,
       method: 'tools/call',
       params: {
         name: 'create_outbound_sequence',
@@ -128,7 +149,7 @@ describe('mcp route protocol compatibility', () => {
 
     const customResponse = await POST(request({
       jsonrpc: '2.0',
-      id: 7,
+      id: 8,
       method: 'tools/call',
       params: {
         name: 'create_outbound_sequence',

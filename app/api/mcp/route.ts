@@ -31,6 +31,7 @@ const pollingOutputSchema = {
     ok: { type: 'boolean' },
     batch_id: { type: 'string' },
     status: { type: 'string' },
+    play_id: { type: 'string' },
     review_url: { type: 'string' },
     dashboard_status_url: { type: 'string' },
     poll_tool: { type: 'string' },
