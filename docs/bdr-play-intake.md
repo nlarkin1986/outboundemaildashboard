@@ -9,18 +9,27 @@ When a BDR asks to "sequence this account" or names a company plus contacts/titl
 1. Ask: "Do you want to run a fully custom sequence or the BDR outreach sequence play?"
 2. If the user selects the BDR outreach sequence play, ask: "Do you have a CSV, or are you pasting in account names?"
 3. Parse the selected input format for company, domain when known, any supplied contact details, optional email, and campaign target information.
-4. Call `create_outbound_sequence` with `play_id: "bdr_cold_outbound"`.
+4. Call `create_outbound_sequence` with `request_context` and, when explicit, `play_id: "bdr_cold_outbound"`.
 
 In the common path, ask no more than two follow-up turns before creating the batch.
 
-Cowork determines that the user wants the BDR play. The Vercel-side BDR workflow can discover contact/persona candidates when Cowork only supplies the company, then determines the specific sequence code and runs the research needed to fill that selected sequence.
+The Vercel AI SDK intake agent can infer the BDR play from `request_context` and fill durable `play_metadata.intake` when Cowork omits `play_id`. The Vercel-side BDR workflow can discover contact/persona candidates when Cowork only supplies the company, then determines the specific sequence code and runs the research needed to fill that selected sequence.
 
 If the user selects a fully custom sequence, do not set `play_id`. The current generic/custom research-to-sequence path is represented by omitting `play_id`.
+
+## Prompt pack and research behavior
+
+The BDR workflow uses `docs/bdr-cold-outbound-prompt-pack.md` as the durable source for sequence-specific research instructions. Runtime prompts are sliced to the selected sequence and selected Step 1 / Step 4 lookup needs; the full prompt pack is not sent to the model for every contact.
+
+Research follows the prompt pack retrieval order: Exa search first, static page extraction for promising pages, and optional Browserbase fallback only when configured and needed for JS-rendered pages. The workflow then builds a compact evidence dossier, qualifies source strength and repeated patterns, and uses the Vercel AI SDK structured synthesis path only as a bounded insert judge over that dossier. Weak evidence intentionally renders the generic opener or Version B branch with a warning rather than forcing a personalized line.
+
+Status diagnostics include `diagnostics.deployment.prompt_pack_revision` so operators can verify the deployed runtime is using the expected prompt pack. BDR status diagnostics also include `diagnostics.bdr_personalization.optimized_dossier_path` and `fallback_causes` so operators can distinguish weak evidence, provider configuration, provider failure, agent failure, and blocked sequence mapping without exposing raw provider payloads.
 
 ## Required inputs
 
 - `actor.email`
-- `play_id: "bdr_cold_outbound"`
+- `request_context`
+- `play_id: "bdr_cold_outbound"` when Cowork has explicitly selected the BDR play
 - At least one company with `company_name`
 - Contact titles when Cowork already has them
 
@@ -31,6 +40,7 @@ Contact names, titles, and emails are optional for review-only drafting. If they
 ```json
 {
   "actor": { "email": "bdr@example.com", "cowork_thread_id": "thread-123" },
+  "request_context": "Sequence Kizik contacts through the BDR play.",
   "play_id": "bdr_cold_outbound",
   "play_metadata": {
     "intake": {
@@ -67,7 +77,7 @@ Contact names, titles, and emails are optional for review-only drafting. If they
 BDR generation runs in two passes:
 
 1. Sequence planning: account/category and contact-title research selects the BDR sequence code or produces a warning-only mapping.
-2. Placeholder research: only the selected Step 1 / Step 4 lookup needs are researched and substituted into the controlled templates.
+2. Placeholder research: only the selected Step 1 / Step 4 lookup needs are researched, qualified into compact dossiers, judged into one selected insert or fallback, and substituted into the controlled templates.
 
 The review UI shows the original BDR play step labels:
 
@@ -84,5 +94,6 @@ Reviewers should expect warnings for:
 - Contact titles that do not map to a supported BDR persona
 - Missing real emails
 - Thin or unavailable public research
+- Missing optional Browserbase fallback when static evidence is weak
 
 Warnings are designed to keep the workflow review-safe. They should not be hidden from the reviewer or treated as successful personalization.

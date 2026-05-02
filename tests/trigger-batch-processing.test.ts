@@ -58,4 +58,36 @@ describe('triggerBatchProcessing', () => {
       },
     });
   });
+
+  it('does not report started when the internal endpoint rejects the trigger', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null, { status: 503 }));
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('INTERNAL_API_SECRET', 'super-secret');
+    vi.stubEnv('APP_BASE_URL', 'https://example.com');
+
+    await expect(triggerBatchProcessing('batch_1')).resolves.toEqual({
+      started: false,
+      mode: 'internal-endpoint',
+      correlation_id: expect.stringMatching(/^batch-trigger-/),
+      requested_at: expect.any(String),
+      internal_path: '/api/internal/process-batch/batch_1',
+      warning: expect.stringMatching(/status 503/i),
+    });
+  });
+
+  it('does not report started when the internal endpoint cannot be reached', async () => {
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network unavailable'));
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('INTERNAL_API_SECRET', 'super-secret');
+    vi.stubEnv('APP_BASE_URL', 'https://example.com');
+
+    await expect(triggerBatchProcessing('batch_1')).resolves.toEqual({
+      started: false,
+      mode: 'internal-endpoint',
+      correlation_id: expect.stringMatching(/^batch-trigger-/),
+      requested_at: expect.any(String),
+      internal_path: '/api/internal/process-batch/batch_1',
+      warning: expect.stringMatching(/network unavailable/i),
+    });
+  });
 });

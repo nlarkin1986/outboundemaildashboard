@@ -64,7 +64,7 @@ describe('cowork identity and account ownership', () => {
     expect(batch.created_by_user_id).toBeTruthy();
   });
 
-  it('rejects webhook BDR metadata when play_id is omitted', async () => {
+  it('infers webhook BDR play id from BDR metadata when play_id is omitted', async () => {
     const previousSecret = process.env.COWORK_WEBHOOK_SECRET;
     process.env.COWORK_WEBHOOK_SECRET = 'test-secret';
     try {
@@ -81,8 +81,9 @@ describe('cowork identity and account ownership', () => {
       }));
       const body = await response.json();
 
-      expect(response.status).toBe(400);
-      expect(body.error).toMatch(/durable play_id/i);
+      expect(response.status).toBe(201);
+      expect(body.play_id).toBe('bdr_cold_outbound');
+      expect(body.routing).toMatchObject({ selected_route: 'bdr_workflow', source: 'metadata' });
     } finally {
       if (previousSecret === undefined) delete process.env.COWORK_WEBHOOK_SECRET;
       else process.env.COWORK_WEBHOOK_SECRET = previousSecret;

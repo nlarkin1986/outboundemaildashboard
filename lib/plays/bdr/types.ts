@@ -30,6 +30,7 @@ export type BdrSequenceSelection = {
 
 export type BdrLookupKey = BdrSequenceTemplate['step1']['lookup'] | BdrSequenceTemplate['step4']['lookup'];
 export type BdrEvidenceType = 'product' | 'help_center' | 'jobs' | 'press' | 'reviews' | 'social' | 'inference';
+export type BdrFallbackCause = 'weak_evidence' | 'provider_configuration' | 'provider_failure' | 'agent_failure' | 'blocked_sequence_mapping';
 
 export type BdrPersonalizationInsert = {
   selected_insert?: string;
@@ -41,6 +42,8 @@ export type BdrPersonalizationInsert = {
   source_snippet?: string;
   fallback_used: boolean;
   warning?: string;
+  fallback_cause?: BdrFallbackCause;
+  qualification_rationale?: string;
 };
 
 export type BdrSequencePlan = {

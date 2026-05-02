@@ -2,7 +2,7 @@ import type { BatchStatus } from '@/lib/types';
 import { createBatch, getBatchById, listBatchRuns, reviewUrlForBatchToken, updateBatchStatus, upsertUserFromCoworkActor } from '@/lib/store';
 import { dashboardStatusUrl, pollingMetadata } from '@/lib/cowork/continuation';
 import { triggerBatchProcessing } from '@/lib/jobs/triggerBatchProcessing';
-import { assertNoBdrRoutingMismatch } from '@/lib/plays/bdr/intent';
+import { resolveOutboundPlayRoute } from '@/lib/plays/bdr/intake-agent';
 import { routeDiagnostics } from '@/lib/mcp/diagnostics';
 import { createOutboundSequenceSchema, getOutboundSequenceStatusSchema, type CreateOutboundSequenceInput, type GetOutboundSequenceStatusInput } from './schemas';
 
@@ -19,24 +19,26 @@ export async function createOutboundSequence(input: CreateOutboundSequenceInput)
   const parsed = createOutboundSequenceSchema.safeParse(input);
   if (!parsed.success) throw new Error(`A valid actor email is required: ${parsed.error.message}`);
   const data = parsed.data;
-  assertNoBdrRoutingMismatch(data);
+  const routed = await resolveOutboundPlayRoute(data);
+  const routedInput = routed.input;
   const owner = await upsertUserFromCoworkActor(data.actor);
   const batch = await createBatch({
     actor: data.actor,
     requested_by: owner.user.email,
     cowork_thread_id: data.actor.cowork_thread_id,
-    campaign_id: data.campaign_id ?? undefined,
-    mode: data.mode,
+    campaign_id: routedInput.campaign_id ?? undefined,
+    mode: routedInput.mode,
     source: 'cowork',
-    play_id: data.play_id,
-    play_metadata: data.play_metadata,
-    target_persona: data.target_persona,
-    companies: data.companies,
+    play_id: routedInput.play_id,
+    play_metadata: routedInput.play_metadata,
+    target_persona: routedInput.target_persona,
+    companies: routedInput.companies,
   });
 
   let status: BatchStatus = batch.status;
   const warnings: string[] = [];
   const trigger = await triggerBatchProcessing(batch.id);
+  warnings.push(...routed.warnings);
   if (trigger.warning) warnings.push(trigger.warning);
   if (trigger.started && status === 'queued') {
     status = 'processing';
@@ -61,6 +63,10 @@ export async function createOutboundSequence(input: CreateOutboundSequenceInput)
     created_by: owner.user.email,
     account_domain: owner.account.domain,
     diagnostics: routeDiagnostics(batch.play_id),
+    routing: {
+      selected_route: routed.selected_route,
+      source: routed.source,
+    },
     warnings,
   };
 }
@@ -74,19 +80,24 @@ export async function getOutboundSequenceStatus(input: GetOutboundSequenceStatus
   if (batch.account_id && batch.account_id !== owner.account.id) throw new Error('Actor cannot access this batch');
   const runs = await listBatchRuns(batch.id);
   const hasErrors = Boolean(batch.error || runs.some((run) => run.error));
+  let status = batch.status;
+  if (status === 'processing' && runs.length > 0 && runs.every((run) => run.status === 'ready_for_review') && !hasErrors) {
+    status = 'ready_for_review';
+    await updateBatchStatus(batch.id, status);
+  }
   return {
     ok: true as const,
     batch_id: batch.id,
-    status: batch.status,
+    status,
     play_id: batch.play_id,
     review_url: batch.review_url ?? reviewUrlForBatchToken(batch.review_token),
     dashboard_status_url: dashboardStatusUrl(batch.id),
-    ...pollingMetadata(batch.status),
+    ...pollingMetadata(status),
     created_by: batch.requested_by,
     account_domain: owner.account.domain,
     diagnostics: routeDiagnostics(batch.play_id),
     processing: {
-      state: processingState(batch.status, runs.length, hasErrors),
+      state: processingState(status, runs.length, hasErrors),
       run_count: runs.length,
     },
     run_counts: {

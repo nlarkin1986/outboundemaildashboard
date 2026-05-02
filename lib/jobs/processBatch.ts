@@ -45,6 +45,10 @@ function batchCompanyKey(company: CompanyInput) {
   return `name:${company.company_name.trim().toLowerCase().replace(/\s+/g, ' ')}`;
 }
 
+function targetPersonaFromMetadata(playMetadata?: Record<string, unknown>) {
+  return typeof playMetadata?.target_persona === 'string' ? playMetadata.target_persona : undefined;
+}
+
 export async function processBatch(batchId: string, options: { triggerId?: string } = {}) {
   const batch = await getBatchById(batchId);
   if (!batch) throw new Error(`Batch not found: ${batchId}`);
@@ -76,7 +80,7 @@ export async function processBatch(batchId: string, options: { triggerId?: strin
       const bdrWorkflow = batch.play_id === BDR_PLAY_ID
         ? await runBdrPlayWorkflow({ company })
         : undefined;
-      const agentOutput = bdrWorkflow?.output ?? await runCompanyAgent({ company: companyForAgent, targetPersona: undefined });
+      const agentOutput = bdrWorkflow?.output ?? await runCompanyAgent({ company: companyForAgent, targetPersona: targetPersonaFromMetadata(batch.play_metadata) });
       const runContacts = hasContacts
         ? normalizedInputContacts!
         : agentOutput.contacts.length
@@ -124,6 +128,9 @@ export async function processBatch(batchId: string, options: { triggerId?: strin
       await saveReviewState(run.review_token, {
         contacts: state.contacts.map((contact) => {
           const agentContact = agentContactsByEmail.get(contact.email.toLowerCase());
+          if (!agentContact && batch.play_id === BDR_PLAY_ID) {
+            throw new Error(`BDR output did not include rendered template copy for ${contact.email}; refusing to keep generic draft text.`);
+          }
           if (!agentContact) {
             return !hasContacts
               ? { ...contact, status: 'needs_edit' as const, qa_warnings: [...contact.qa_warnings, 'No contacts supplied; cannot push to Instantly until contacts/emails are added.'] }
@@ -146,6 +153,8 @@ export async function processBatch(batchId: string, options: { triggerId?: strin
                 step_number: agentEmail.step_number,
                 original_step_number: agentEmail.original_step_number,
                 step_label: agentEmail.step_label,
+                original_subject: agentEmail.subject,
+                original_body_html: agentEmail.body_html,
                 subject: agentEmail.subject,
                 body_html: agentEmail.body_html,
                 body_text: agentEmail.body_text,
@@ -153,7 +162,7 @@ export async function processBatch(batchId: string, options: { triggerId?: strin
             }),
           };
         }),
-      });
+      }, 'batch_processor', { allowServerOwnedContactFields: true });
       await updateBatchRunStatus(batchId, run.id, 'ready_for_review');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

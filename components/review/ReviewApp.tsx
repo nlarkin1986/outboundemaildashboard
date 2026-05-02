@@ -35,6 +35,10 @@ function linkedinNote(contact: ReviewContact) {
   return { note, label: typeof label === 'string' ? label : 'LinkedIn connection note' };
 }
 
+function draftGenerationBlocked(contact: ReviewContact) {
+  return contact.play_metadata?.draft_generation_blocked === true || (contact.play_metadata?.play_id === 'bdr_cold_outbound' && !contact.sequence_code);
+}
+
 export function ReviewApp({ initialState, token }: { initialState: ReviewState; token: string }) {
   const [state, setState] = useState(() => normalizeReviewStateForEditing(initialState));
   const [selectedId, setSelectedId] = useState(initialState.contacts[0]?.id);
@@ -44,6 +48,7 @@ export function ReviewApp({ initialState, token }: { initialState: ReviewState; 
   const [popup, setPopup] = useState<string | null>(null);
   const selected = state.contacts.find((c) => c.id === selectedId) ?? state.contacts[0];
   const selectedLinkedInNote = selected ? linkedinNote(selected) : undefined;
+  const selectedDraftBlocked = selected ? draftGenerationBlocked(selected) : false;
 
   const counts = useMemo(() => ({
     total: state.contacts.length,
@@ -216,7 +221,7 @@ export function ReviewApp({ initialState, token }: { initialState: ReviewState; 
               </div>
             </div>
             <div className="statusButtons" aria-label="Approval status">
-              {(['approved','needs_edit','skipped'] as const).map((status) => <button key={status} className={selected.status === status ? `active ${statusClass(status)}` : ''} onClick={() => updateContact(selected.id, { status })}>{statusLabel(status)}</button>)}
+              {(['approved','needs_edit','skipped'] as const).map((status) => <button key={status} disabled={status === 'approved' && selectedDraftBlocked} title={status === 'approved' && selectedDraftBlocked ? 'Generate a valid BDR sequence before approval.' : undefined} className={selected.status === status ? `active ${statusClass(status)}` : ''} onClick={() => updateContact(selected.id, { status })}>{statusLabel(status)}</button>)}
             </div>
           </div>
 
@@ -238,7 +243,15 @@ export function ReviewApp({ initialState, token }: { initialState: ReviewState; 
             {selectedLinkedInNote ? <div className="warningCallout"><strong>{selectedLinkedInNote.label}:</strong> {selectedLinkedInNote.note}</div> : null}
           </div>
 
-          <div className="emailStack" id="emails">
+          {selectedDraftBlocked ? <div className="emailStack" id="emails">
+            <div className="reviewCard emailCard">
+              <div className="emailHeader">
+                <div><div className="sectionEyebrow">Email draft</div><h3>BDR sequence unavailable</h3></div>
+                <span className="badge warningBadge">Blocked</span>
+              </div>
+              <div className="warningCallout">No email draft was generated for this contact because the BDR workflow could not map a supported persona and sequence. Update the title/persona or mark the contact skipped.</div>
+            </div>
+          </div> : <div className="emailStack" id="emails">
             {selected.emails.map((email) => <div className="reviewCard emailCard" key={email.id}>
               <div className="emailHeader">
                 <div><div className="sectionEyebrow">{emailDisplayLabel(email)}</div><h3>{email.subject}</h3></div>
@@ -263,7 +276,7 @@ export function ReviewApp({ initialState, token }: { initialState: ReviewState; 
                 </div>
               </div>
             </div>)}
-          </div>
+          </div>}
         </section>
       </div>
     </section>

@@ -2,7 +2,9 @@
 
 Revision: `bdr-vercel-pipeline-2026-05-01`
 
-Cowork determines whether the user selected the BDR outreach sequence play. The
+Cowork should pass the original request in `request_context`. The Vercel AI SDK
+intake agent determines whether the request belongs to the BDR outreach sequence
+play when `play_id` is missing, then fills durable BDR intake metadata. The
 Vercel workflow determines everything inside the BDR play: brand type, contact
 candidate handling, persona, exact sequence code, placeholder research, email
 rendering, LinkedIn note preview, evidence, and warnings.
@@ -17,6 +19,7 @@ Use this shape after the user selects the BDR outreach sequence play:
     "email": "bdr@example.com",
     "cowork_thread_id": "thread-123"
   },
+  "request_context": "Run the BDR outreach sequence play for these accounts.",
   "play_id": "bdr_cold_outbound",
   "play_metadata": {
     "intake": {
@@ -49,6 +52,7 @@ Allowed BDR input can be as small as:
 ```json
 {
   "actor": { "email": "bdr@example.com" },
+  "request_context": "Sequence these accounts for BDR outreach.",
   "play_id": "bdr_cold_outbound",
   "play_metadata": {
     "intake": {
@@ -73,12 +77,17 @@ For a fully custom sequence, omit `play_id`:
     "email": "bdr@example.com",
     "cowork_thread_id": "thread-123"
   },
+  "request_context": "Build a fully custom outbound sequence for CX leaders at ecommerce brands.",
   "target_persona": "CX leaders at ecommerce brands",
   "companies": [
     { "company_name": "Quince", "domain": "quince.com" }
   ]
 }
 ```
+
+The backend stores `target_persona` in batch metadata and passes it to the
+generic Vercel AI SDK company agent. Use `request_context` for the human
+instruction and `target_persona` for the audience/persona constraint.
 
 ## Do not send
 

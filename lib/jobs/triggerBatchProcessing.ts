@@ -50,23 +50,40 @@ export async function triggerBatchProcessing(batchId: string): Promise<TriggerBa
   }
 
   const internalPath = `/api/internal/process-batch/${encodeURIComponent(batchId)}`;
-  fetch(`${baseUrl}${internalPath}`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${process.env.INTERNAL_API_SECRET}`,
-      'x-batch-trigger-id': correlationId,
-    },
-  }).then((response) => {
+  try {
+    const response = await fetch(`${baseUrl}${internalPath}`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${process.env.INTERNAL_API_SECRET}`,
+        'x-batch-trigger-id': correlationId,
+      },
+    });
     if (!response.ok) {
       console.error('Failed to trigger batch processing', { batchId, correlationId, status: response.status });
+      return {
+        started: false,
+        mode: 'internal-endpoint',
+        correlation_id: correlationId,
+        requested_at: requestedAt,
+        internal_path: internalPath,
+        warning: `Internal batch trigger failed with status ${response.status}; batch was created but processing was not auto-started.`,
+      };
     }
-  }).catch((error) => {
+  } catch (error) {
     console.error('Failed to trigger batch processing', {
       batchId,
       correlationId,
       error: error instanceof Error ? error.message : String(error),
     });
-  });
+    return {
+      started: false,
+      mode: 'internal-endpoint',
+      correlation_id: correlationId,
+      requested_at: requestedAt,
+      internal_path: internalPath,
+      warning: `Internal batch trigger failed: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
 
   return { started: true, mode: 'internal-endpoint', correlation_id: correlationId, requested_at: requestedAt, internal_path: internalPath };
 }

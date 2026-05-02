@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createOutboundSequence, getOutboundSequenceStatus } from '@/lib/mcp/outbound-tools';
 
+export const maxDuration = 300;
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
@@ -64,12 +66,23 @@ const pollingOutputSchema = {
           additionalProperties: true,
           properties: {
             contract_revision: { type: 'string' },
+            prompt_pack_revision: { type: 'string' },
             environment: { type: 'string' },
             deployment_url: { type: 'string' },
             git: { type: 'object', additionalProperties: true },
           },
         },
         research_providers: { type: 'object', additionalProperties: true },
+        bdr_personalization: {
+          type: 'object',
+          additionalProperties: true,
+          properties: {
+            optimized_dossier_path: { type: 'string' },
+            prompt_pack_revision: { type: 'string' },
+            final_synthesis: { type: 'string' },
+            fallback_causes: { type: 'array', items: { type: 'string' } },
+          },
+        },
       },
     },
   },
@@ -78,7 +91,7 @@ const pollingOutputSchema = {
 const tools = [
   {
     name: 'create_outbound_sequence',
-    description: 'Create a Gladly outbound sequence batch for a Cowork user. Returns immediately with a durable batch_id, dashboard URL, review URL, and polling instructions. For the BDR cold outbound play, Cowork determines play intent and sets play_id to bdr_cold_outbound after confirming sequencing intent and collecting company, domain when known, contact names, contact titles, optional emails, and campaign_id when the user wants push. The Vercel workflow determines the BDR sequence code and researches the selected placeholders. Ask at most two follow-up turns before calling: one to confirm the BDR play if intent is ambiguous, one to collect missing required account/contact/title/campaign details. If status is queued, processing, or pushing, call get_outbound_sequence_status after recommended_poll_after_seconds until terminal/action state. Requires actor.email.',
+    description: 'Create a Gladly outbound sequence batch for a Cowork user. Returns immediately with a durable batch_id, dashboard URL, review URL, and polling instructions. Pass the user request in request_context when available; the Vercel AI SDK intake agent will select the BDR cold outbound play and fill play metadata when the request is for BDR/account sequencing. Explicit play_id bdr_cold_outbound still works and fully custom requests can omit play_id. The Vercel workflow determines the BDR sequence code and researches the selected placeholders. If status is queued, processing, or pushing, call get_outbound_sequence_status after recommended_poll_after_seconds until terminal/action state. Requires actor.email.',
     inputSchema: {
       type: 'object',
       required: ['actor', 'companies'],
@@ -88,6 +101,8 @@ const tools = [
         mode: { type: 'string', enum: ['fast', 'deep'] },
         play_id: { type: 'string', enum: ['bdr_cold_outbound'], description: 'Use bdr_cold_outbound for the BDR cold outbound sequencing play. Omit for the existing generic outbound flow.' },
         play_metadata: { type: 'object', additionalProperties: true },
+        request_context: { type: 'string', description: 'Natural-language user request or intake summary. Used by the Vercel AI SDK intake agent to choose BDR vs fully custom routing.' },
+        user_request: { type: 'string', description: 'Alias for request_context for clients that already capture the original user request.' },
         target_persona: { type: 'string' },
         campaign_id: { type: ['string', 'null'] },
       },

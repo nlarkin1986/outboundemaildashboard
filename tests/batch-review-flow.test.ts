@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { attachRunToBatch, createBatch, createRun, getBatchReviewByToken, pushApprovedContactsForBatch, resetStore, saveBatchReviewState, submitBatchReview } from '@/lib/store';
+import { attachRunToBatch, createBatch, createRun, getBatchReviewByToken, pushApprovedContactsForBatch, resetStore, saveBatchReviewState, saveReviewState, submitBatchReview } from '@/lib/store';
 import { processBatch } from '@/lib/jobs/processBatch';
 
 describe('batch review flow', () => {
@@ -218,5 +218,47 @@ describe('batch review flow', () => {
     expect(result.pushed).toBe(1);
     expect(calls[0].emails).toHaveLength(2);
     expect(calls[0].emails.map((email: any) => email.original_step_number)).toEqual([1, 4]);
+  });
+
+  it('does not queue unmapped BDR contacts for push', async () => {
+    const batch = await createBatch({
+      actor: { email: 'nate@example.com' },
+      cowork_thread_id: 'cowork-thread-123',
+      campaign_id: 'campaign-1',
+      play_id: 'bdr_cold_outbound',
+      companies: [{
+        company_name: 'Kizik',
+        domain: 'kizik.com',
+        contacts: [{ first_name: 'Casey', last_name: 'Morgan', title: 'Chief Marketing Officer', email: 'casey@example.com' }],
+      }],
+    });
+    await processBatch(batch.id);
+    const state = await getBatchReviewByToken(batch.review_token);
+    const contact = state.runs[0].review.contacts[0];
+
+    expect(contact.sequence_code).toBeUndefined();
+    expect(contact.play_metadata?.draft_generation_blocked).toBe(true);
+    expect(contact.emails[0].body_text).not.toMatch(/confirm the right BDR sequence|{{first_name}}/);
+
+    contact.status = 'approved';
+    contact.sequence_code = 'A-1';
+    contact.play_metadata = {};
+    await saveReviewState(state.runs[0].review.run.review_token, { contacts: [contact] }, 'reviewer@example.com');
+
+    const singleSaved = await getBatchReviewByToken(batch.review_token);
+    const singleSavedContact = singleSaved.runs[0].review.contacts[0];
+    expect(singleSavedContact.sequence_code).toBeUndefined();
+    expect(singleSavedContact.play_metadata?.draft_generation_blocked).toBe(true);
+    expect(singleSavedContact.status).toBe('approved');
+    await expect(submitBatchReview(batch.review_token, 'reviewer@example.com')).rejects.toThrow(/sendable sequence/);
+
+    singleSavedContact.sequence_code = 'A-1';
+    singleSavedContact.play_metadata = {};
+    await saveBatchReviewState(batch.review_token, { runs: [{ run_id: state.runs[0].run_id, contacts: [singleSavedContact] }] }, 'reviewer@example.com');
+
+    const batchSaved = await getBatchReviewByToken(batch.review_token);
+    expect(batchSaved.runs[0].review.contacts[0].sequence_code).toBeUndefined();
+    expect(batchSaved.runs[0].review.contacts[0].play_metadata?.draft_generation_blocked).toBe(true);
+    await expect(submitBatchReview(batch.review_token, 'reviewer@example.com')).rejects.toThrow(/sendable sequence/);
   });
 });

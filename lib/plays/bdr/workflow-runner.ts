@@ -4,7 +4,7 @@ import { findPeopleWithExa, type PeopleResult } from '@/lib/ai/tools';
 import { bdrContactKey, createBdrSequencePlans } from './sequence-plan';
 import { researchBdrPlaceholders } from './placeholder-research';
 import { renderBdrWorkflowOutput } from './workflow-output';
-import { defaultBdrResearchProvider, type BdrResearchProvider } from './research';
+import { defaultBdrResearchProvider, type BdrResearchFinding, type BdrResearchProvider } from './research';
 import type { BdrPlaceholderResearch, BdrSequencePlan } from './types';
 
 export type BdrWorkflowResult = {
@@ -75,6 +75,28 @@ async function resolveBdrContacts(company: CompanyInput, contactDiscoveryProvide
   return [{ name: 'Contact needed', title: undefined }];
 }
 
+function lookupCachedProvider(provider: BdrResearchProvider): BdrResearchProvider {
+  const cache = new Map<string, Promise<BdrResearchFinding>>();
+  const cached = (lookup: string, company: CompanyInput, run: () => Promise<BdrResearchFinding>) => {
+    const key = `${lookup}|${company.domain ?? ''}|${company.company_name.toLowerCase()}`;
+    const existing = cache.get(key);
+    if (existing) return existing;
+    const promise = run();
+    cache.set(key, promise);
+    return promise;
+  };
+
+  return {
+    ...provider,
+    heroProduct: (company) => cached('hero_product', company, () => provider.heroProduct(company)),
+    complexProduct: (company) => cached('complex_product', company, () => provider.complexProduct(company)),
+    digitalSignal: (company) => cached('digital_signal', company, () => provider.digitalSignal(company)),
+    subscriptionSignal: (company) => cached('subscription_signal', company, () => provider.subscriptionSignal(company)),
+    reviewPattern: (company) => cached('review_pattern', company, () => provider.reviewPattern(company)),
+    supportJobs: (company) => cached('support_jobs', company, () => provider.supportJobs(company)),
+  };
+}
+
 export async function runBdrPlayWorkflow({
   company,
   researchProvider = defaultBdrResearchProvider,
@@ -87,11 +109,16 @@ export async function runBdrPlayWorkflow({
   const contacts = await resolveBdrContacts(company, contactDiscoveryProvider);
   const { plans } = await createBdrSequencePlans({ company, contacts, researchProvider });
   const placeholderMap = new Map<string, BdrPlaceholderResearch>();
+  const placeholderBySequence = new Map<string, BdrPlaceholderResearch>();
+  const useSynthesisAgent = researchProvider === defaultBdrResearchProvider;
+  const cachedResearchProvider = lookupCachedProvider(researchProvider);
 
   for (let index = 0; index < contacts.length; index++) {
     const plan = plans[index];
     if (!plan?.sequence_code) continue;
-    const research = await researchBdrPlaceholders({ company, plan, researchProvider });
+    const cached = placeholderBySequence.get(plan.sequence_code);
+    const research = cached ?? await researchBdrPlaceholders({ company, plan, researchProvider: cachedResearchProvider, useSynthesisAgent });
+    if (!cached && research) placeholderBySequence.set(plan.sequence_code, research);
     if (research) placeholderMap.set(bdrContactKey(contacts[index], index), research);
   }
 

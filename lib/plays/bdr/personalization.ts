@@ -29,7 +29,7 @@ function categoryForProduct(title: string) {
   if (/cashmere/.test(text) && /sweater|cardigan|crew|pullover|hoodie/.test(text)) return 'cashmere sweaters';
   if (/linen/.test(text) && /sheet|duvet|bedding|quilt/.test(text)) return 'linen bedding';
   if (/silk/.test(text) && /dress|shirt|skirt|pajama|robe|collection/.test(text)) return 'washable silk';
-  if (/sneaker|shoe|footwear/.test(text)) return title.replace(/\bshoe(s)?|sneaker(s)?\b/gi, (match) => match.toLowerCase());
+  if (/sneaker|shoe|footwear/.test(text)) return title.replace(/\s+/g, ' ').trim();
   return title
     .replace(/\b(Mongolian|European|Organic|Premium|Classic|Essential)\b/gi, '')
     .replace(/\s+/g, ' ')
@@ -56,6 +56,8 @@ function productPhrase(value: string) {
     .replace(/^[A-Z][A-Za-z0-9 .&'-]+\s+\|\s+/i, '')
     .replace(/\s+[-–—]\s+.*/g, '')
     .trim();
+  const productTitle = cleaned.match(/^(.{4,90}?\b(?:sneaker|shoe|footwear|boot|sandal|sweater|cardigan|dress|shirt|sofa|sectional|mattress|table|chair|warranty|bundle|collection|sheet set)\b)/i)?.[1];
+  if (productTitle) return categoryForProduct(productTitle.trim());
   const product = categoryForProduct(cleaned);
   return product.length <= 90 ? product : undefined;
 }

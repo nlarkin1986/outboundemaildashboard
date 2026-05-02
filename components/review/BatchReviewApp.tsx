@@ -31,6 +31,10 @@ function linkedinNote(contact: ReviewContact) {
   return { note, label: typeof label === 'string' ? label : 'LinkedIn connection note' };
 }
 
+function draftGenerationBlocked(contact: ReviewContact) {
+  return contact.play_metadata?.draft_generation_blocked === true || (contact.play_metadata?.play_id === 'bdr_cold_outbound' && !contact.sequence_code);
+}
+
 export function BatchReviewApp({ initialState, token }: { initialState: BatchReviewState; token: string }) {
   const [state, setState] = useState(() => normalizeBatchReviewStateForEditing(initialState));
   const firstContact = state.runs.flatMap((r) => r.review.contacts.map((c) => ({ runId: r.run_id, contactId: c.id }))).at(0);
@@ -40,6 +44,7 @@ export function BatchReviewApp({ initialState, token }: { initialState: BatchRev
   const selectedRun = state.runs.find((r) => r.run_id === selected?.runId) ?? state.runs[0];
   const selectedContact = selectedRun?.review.contacts.find((c) => c.id === selected?.contactId) ?? selectedRun?.review.contacts[0];
   const selectedLinkedInNote = selectedContact ? linkedinNote(selectedContact) : undefined;
+  const selectedDraftBlocked = selectedContact ? draftGenerationBlocked(selectedContact) : false;
 
   const counts = useMemo(() => {
     const contacts = state.runs.flatMap((r) => r.review.contacts);
@@ -49,7 +54,7 @@ export function BatchReviewApp({ initialState, token }: { initialState: BatchRev
       approved: contacts.filter((c) => c.status === 'approved').length,
       needsEdit: contacts.filter((c) => c.status === 'needs_edit').length,
       skipped: contacts.filter((c) => c.status === 'skipped').length,
-      readyToPush: contacts.filter((c) => c.status === 'approved' && !c.email.endsWith('.invalid')).length,
+      readyToPush: contacts.filter((c) => c.status === 'approved' && !c.email.endsWith('.invalid') && !draftGenerationBlocked(c)).length,
     };
   }, [state]);
 
@@ -186,7 +191,7 @@ export function BatchReviewApp({ initialState, token }: { initialState: BatchRev
         <section className="detailPanel">
           <div className="reviewCard selectedHeader">
             <div><div className="sectionEyebrow">Selected contact</div><h2>{selectedContact.first_name} {selectedContact.last_name}</h2><p>{selectedContact.title} · {selectedContact.email}</p></div>
-            <div className="statusButtons">{(['approved','needs_edit','skipped'] as const).map((status) => <button key={status} className={selectedContact.status === status ? `active ${statusClass(status)}` : ''} onClick={() => updateContact(selectedRun.run_id, selectedContact.id, { status })}>{statusLabel(status)}</button>)}</div>
+            <div className="statusButtons">{(['approved','needs_edit','skipped'] as const).map((status) => <button key={status} disabled={status === 'approved' && selectedDraftBlocked} title={status === 'approved' && selectedDraftBlocked ? 'Generate a valid BDR sequence before approval.' : undefined} className={selectedContact.status === status ? `active ${statusClass(status)}` : ''} onClick={() => updateContact(selectedRun.run_id, selectedContact.id, { status })}>{statusLabel(status)}</button>)}</div>
           </div>
           <div className="reviewCard evidenceCard">
             <div className="panelTitleRow"><div><div className="sectionEyebrow">Evidence and angle</div><h3>Review before approving</h3></div>{selectedContact.qa_warnings.length ? <span className="badge warningBadge">Warnings</span> : <span className="badge activeBadge">No QA warnings</span>}</div>
@@ -199,12 +204,17 @@ export function BatchReviewApp({ initialState, token }: { initialState: BatchRev
             {selectedContact.qa_warnings.length ? <div className="warningCallout">{selectedContact.qa_warnings.join(', ')}</div> : null}
             {selectedLinkedInNote ? <div className="warningCallout"><strong>{selectedLinkedInNote.label}:</strong> {selectedLinkedInNote.note}</div> : null}
           </div>
-          <div className="emailStack">
+          {selectedDraftBlocked ? <div className="emailStack">
+            <div className="reviewCard emailCard">
+              <div className="emailHeader"><div><div className="sectionEyebrow">Email draft</div><h3>BDR sequence unavailable</h3></div><span className="badge warningBadge">Blocked</span></div>
+              <div className="warningCallout">No email draft was generated for this contact because the BDR workflow could not map a supported persona and sequence. Update the title/persona or mark the contact skipped.</div>
+            </div>
+          </div> : <div className="emailStack">
             {selectedContact.emails.map((email) => <div className="reviewCard emailCard" key={email.id}>
               <div className="emailHeader"><div><div className="sectionEyebrow">{emailDisplayLabel(email)}</div><h3>{email.subject}</h3></div><span className="badge neutralBadge">Draft</span></div>
               <div className="emailGrid"><div className="emailEditor"><label>Subject<input value={email.subject} onChange={(e) => updateEmail(selectedRun.run_id, selectedContact.id, email.step_number, { subject: e.target.value })} /></label><label>Body text<textarea rows={9} value={email.body_text} onChange={(e) => updateEmail(selectedRun.run_id, selectedContact.id, email.step_number, { body_text: e.target.value, body_html: editableTextToHtml(e.target.value) })} /></label></div><div className="previewPane"><div className="sectionEyebrow">Rendered preview</div><div className="emailPreviewFrame"><div className="emailPreviewMeta"><span>Subject</span><strong>{email.subject}</strong></div><div className="emailPreviewBody">{emailParagraphs(email.body_html).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div></div></div></div>
             </div>)}
-          </div>
+          </div>}
         </section>
       </div>
     </section>

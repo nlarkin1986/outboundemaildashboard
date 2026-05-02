@@ -32,6 +32,7 @@ if (process.env.MCP_API_SECRET) {
 }
 
 const genericFallbackPattern = /handoffs without the reset|full conversation history|before it becomes urgent|KUHL: 44% reduction in WISMO emails/i;
+const internalBdrLeakPattern = /confirm the right BDR sequence|\[SELECTED_INSERT\]|PERSONALIZE|prompt_pack|tool trace|api[_-]?key|BDR A-1 template fallback used|Template benchmark fallback used/i;
 const smokeCorrelationId = process.env.BDR_SMOKE_CORRELATION_ID ?? `bdr-smoke-${Date.now()}`;
 const smokeCompanyName = process.env.BDR_SMOKE_COMPANY_NAME ?? 'Gruns';
 const smokeCompanyDomain = process.env.BDR_SMOKE_COMPANY_DOMAIN ?? 'gruns.co';
@@ -83,6 +84,15 @@ function assertBdrDiagnostics(result, label) {
   }
   if (!result?.diagnostics?.deployment?.contract_revision) {
     throw new Error(`${label} did not report deployment contract revision. Diagnostics: ${JSON.stringify(result?.diagnostics ?? {})}`);
+  }
+  if (!result?.diagnostics?.deployment?.prompt_pack_revision) {
+    throw new Error(`${label} did not report BDR prompt pack revision. Diagnostics: ${JSON.stringify(result?.diagnostics ?? {})}`);
+  }
+  if (!result?.diagnostics?.bdr_personalization?.optimized_dossier_path) {
+    throw new Error(`${label} did not report optimized_dossier_path diagnostics. Diagnostics: ${JSON.stringify(result?.diagnostics ?? {})}`);
+  }
+  if (!Array.isArray(result?.diagnostics?.bdr_personalization?.fallback_causes)) {
+    throw new Error(`${label} did not report BDR fallback_causes diagnostics. Diagnostics: ${JSON.stringify(result?.diagnostics ?? {})}`);
   }
 }
 
@@ -156,11 +166,14 @@ try {
   if (genericFallbackPattern.test(serializedReview)) {
     throw new Error(`BDR smoke produced generic company-agent fallback copy. batch_id=${create.batch_id}`);
   }
+  if (internalBdrLeakPattern.test(serializedReview)) {
+    throw new Error(`BDR smoke exposed internal BDR prompt/tool text in review state. batch_id=${create.batch_id}`);
+  }
   if (!serializedReview.includes('bdr_cold_outbound')) {
     throw new Error(`BDR smoke review state does not include BDR play markers. batch_id=${create.batch_id}`);
   }
 
-  console.log(`BDR processing smoke OK: batch_id=${create.batch_id} correlation=${smokeCorrelationId} route=${status.diagnostics.processing_route} runtime=${status.diagnostics.runtime} persistence=${status.diagnostics.persistence} contract_revision=${status.diagnostics.deployment.contract_revision}`);
+  console.log(`BDR processing smoke OK: batch_id=${create.batch_id} correlation=${smokeCorrelationId} route=${status.diagnostics.processing_route} runtime=${status.diagnostics.runtime} persistence=${status.diagnostics.persistence} contract_revision=${status.diagnostics.deployment.contract_revision} prompt_pack_revision=${status.diagnostics.deployment.prompt_pack_revision} optimized_dossier_path=${status.diagnostics.bdr_personalization.optimized_dossier_path}`);
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
