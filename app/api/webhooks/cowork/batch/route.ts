@@ -1,5 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createBatch, reviewUrlForBatchToken } from '@/lib/store';
+import { resolveOutboundPlayRoute } from '@/lib/plays/bdr/intake-agent';
+
+export const maxDuration = 60;
 
 function normalizeEmail(value: unknown) {
   if (typeof value !== 'string') return undefined;
@@ -54,6 +57,8 @@ export function normalizeCoworkBatchPayload(body: any) {
     source: 'cowork' as const,
     play_id: payload.play_id ?? payload.playId,
     play_metadata: payload.play_metadata ?? payload.playMetadata,
+    request_context: payload.request_context ?? payload.requestContext ?? payload.user_request ?? payload.userRequest ?? payload.message ?? payload.prompt,
+    user_request: payload.user_request ?? payload.userRequest,
     target_persona: payload.target_persona ?? payload.targetPersona,
     companies: companies.map((company: any) => typeof company === 'string' ? { company_name: company } : {
       company_name: company.company_name ?? company.companyName ?? company.name,
@@ -78,17 +83,21 @@ export async function POST(request: Request) {
     if (!payload.actor?.email && (process.env.VERCEL || process.env.NODE_ENV === 'production') && process.env.ALLOW_MISSING_COWORK_ACTOR_EMAIL !== 'true') {
       return NextResponse.json({ error: 'Cowork actor email is required' }, { status: 400 });
     }
-    const batch = await createBatch(payload);
+    const routed = await resolveOutboundPlayRoute(payload);
+    const batch = await createBatch({ ...payload, ...routed.input });
     return NextResponse.json({
       ok: true,
       type: body?.type ?? 'outbound.batch.requested',
       batch_id: batch.id,
       status: batch.status,
+      play_id: batch.play_id,
       review_url: reviewUrlForBatchToken(batch.review_token),
       dashboard_status_url: `${process.env.APP_BASE_URL ?? 'http://localhost:3000'}/admin/runs?batch_id=${batch.id}`,
       process_url: `/api/internal/process-batch/${batch.id}`,
       created_by: batch.requested_by,
       account_id: batch.account_id,
+      routing: { selected_route: routed.selected_route, source: routed.source },
+      warnings: routed.warnings,
     }, { status: 201 });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 });

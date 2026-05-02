@@ -1,6 +1,9 @@
 import Link from 'next/link';
 import { appBaseUrl, coworkDeepLinkForBatch, dashboardStatusUrl, pollingMetadata } from '@/lib/cowork/continuation';
+import { metadataConfirmsBdrPlay } from '@/lib/plays/bdr/intent';
+import { BDR_PLAY_ID } from '@/lib/plays/bdr/types';
 import { getBatchById, getRun, listBatchRuns, listRuns, reviewUrlForRun } from '@/lib/store';
+import type { Batch, Run } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -21,6 +24,20 @@ function formatDate(value?: string) {
 
 function Stat({ label, value }: { label: string; value: string | number }) {
   return <div className="card" style={{ padding: 16 }}><p className="eyebrow">{label}</p><strong>{value}</strong></div>;
+}
+
+const genericFallbackPattern = /handoffs without the reset|full conversation history|before it becomes urgent|KUHL: 44% reduction in WISMO emails/i;
+
+function hasGenericFallbackCopy(run?: (Run & { contacts?: unknown[] }) | null) {
+  return Boolean(run && genericFallbackPattern.test(JSON.stringify(run.contacts ?? [])));
+}
+
+function routeTriage(batch: Batch | null, run?: Run | null, hasGenericCopy = false) {
+  const bdrIntent = batch?.play_id === BDR_PLAY_ID || run?.play_id === BDR_PLAY_ID || metadataConfirmsBdrPlay(batch?.play_metadata);
+  if (bdrIntent && hasGenericCopy) return { label: 'Suspect BDR fallback', tone: '#b42318', detail: 'BDR intent is present but the review copy matches the generic company-agent fallback. Recreate after the fixed deploy; do not approve as BDR output.' };
+  if (bdrIntent) return { label: 'BDR route', tone: '#027a48', detail: 'BDR intent is durable. Confirm review output has BDR step labels and sequence metadata before approval.' };
+  if (hasGenericCopy) return { label: 'Generic/custom route', tone: '#6941c6', detail: 'Generic copy is expected only for fully custom requests where play_id is omitted.' };
+  return { label: 'Unclassified route', tone: '#475467', detail: 'Use MCP status diagnostics for deployment and route details.' };
 }
 
 export default async function RunsPage({ searchParams }: { searchParams: SearchParams }) {
@@ -75,6 +92,7 @@ export default async function RunsPage({ searchParams }: { searchParams: SearchP
         <p><strong>Requested by:</strong> {batch.requested_by ?? 'unknown'}</p>
         <p><strong>Created:</strong> {formatDate(batch.created_at)} · <strong>Updated:</strong> {formatDate(batch.updated_at)}</p>
         <p><strong>Source:</strong> {batch.source} · <strong>Mode:</strong> {batch.mode} · <strong>Campaign:</strong> {batch.campaign_id ?? 'none'}</p>
+        <p><strong>Play:</strong> {batch.play_id ?? 'generic/custom'} · <strong>Route triage:</strong> {routeTriage(batch).label}</p>
         <p><strong>Account:</strong> {batch.account_id ?? 'none'} · <strong>Cowork thread:</strong> {batch.cowork_thread_id ?? 'none'}</p>
       </div> : null}
 
@@ -110,9 +128,12 @@ export default async function RunsPage({ searchParams }: { searchParams: SearchP
           const runId = row.run?.id ?? row.batchRun?.run_id ?? 'missing-run';
           const companyName = row.run?.company_name ?? row.batchRun?.company_name ?? 'Unknown company';
           const status = row.batchRun?.status ?? row.run?.status ?? 'unknown';
+          const triage = routeTriage(batch, row.run, hasGenericFallbackCopy(row.run));
           return <div key={runId} className="card" style={{ padding: 16, display: 'grid', gap: 6 }}>
             <strong>{companyName}</strong>
             <p>{status} · run {runId} · {row.contact_count} contacts · {row.approved_count} approved · {row.run?.created_by ?? batch?.requested_by ?? 'unknown requester'}</p>
+            <p><strong style={{ color: triage.tone }}>{triage.label}</strong> · play {row.run?.play_id ?? batch?.play_id ?? 'generic/custom'}</p>
+            <p style={{ fontSize: 12, opacity: .8 }}>{triage.detail}</p>
             <p style={{ fontSize: 12, opacity: .7 }}>account: {row.run?.account_id ?? batch?.account_id ?? 'none'} · user: {row.run?.created_by_user_id ?? batch?.created_by_user_id ?? 'none'}</p>
             {row.batchRun?.error ? <p style={{ color: '#b42318' }}>Error: {row.batchRun.error}</p> : null}
             {row.run ? <Link href={relativeAppUrl(reviewUrlForRun(row.run))}>Open run review</Link> : null}

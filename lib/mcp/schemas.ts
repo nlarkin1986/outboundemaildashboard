@@ -26,6 +26,8 @@ export const createOutboundSequenceSchema = z.object({
   mode: z.enum(['fast', 'deep']).default('fast'),
   play_id: z.enum(['bdr_cold_outbound']).optional(),
   play_metadata: z.record(z.string(), z.unknown()).optional(),
+  request_context: z.string().optional(),
+  user_request: z.string().optional(),
   target_persona: z.string().optional(),
   campaign_id: z.string().nullable().optional(),
 });

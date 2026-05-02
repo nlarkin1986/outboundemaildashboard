@@ -1,2 +1,10 @@
 import { NextResponse } from 'next/server';
-export async function GET() { return NextResponse.json({ ok: true, service: 'outbound-approval-vercel' }); }
+import { publicContractDiagnostics } from '@/lib/mcp/diagnostics';
+
+export async function GET() {
+  return NextResponse.json({
+    ok: true,
+    service: 'outbound-approval-vercel',
+    ...publicContractDiagnostics(),
+  });
+}

@@ -5,6 +5,7 @@ node_modules
 coverage
 .vercel
 dist
+tmp
 .hermes
 .playwright-mcp
 bdr-play-overview.html

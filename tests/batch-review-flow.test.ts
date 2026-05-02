@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { attachRunToBatch, createBatch, createRun, getBatchReviewByToken, pushApprovedContactsForBatch, resetStore, saveBatchReviewState, submitBatchReview } from '@/lib/store';
+import { attachRunToBatch, createBatch, createRun, getBatchReviewByToken, pushApprovedContactsForBatch, resetStore, saveBatchReviewState, saveReviewState, submitBatchReview } from '@/lib/store';
 import { processBatch } from '@/lib/jobs/processBatch';
 
 describe('batch review flow', () => {
@@ -130,6 +130,67 @@ describe('batch review flow', () => {
     expect(contact.emails.map((email) => email.step_label)).toEqual(['Step 1: Email · peer story', 'Step 4: Email · benchmarks / data']);
   });
 
+  it('does not use generic company-agent copy for a BDR contact without a verified email', async () => {
+    const batch = await createBatch({
+      actor: { email: 'nate@example.com' },
+      cowork_thread_id: 'cowork-thread-123',
+      campaign_id: 'campaign-1',
+      play_id: 'bdr_cold_outbound',
+      play_metadata: {
+        intake: {
+          confirmed_play: 'bdr_cold_outbound',
+          user_request_summary: 'Run the BDR play for KiwiCo and Steven Holm.',
+        },
+      },
+      companies: [{
+        company_name: 'KiwiCo',
+        domain: 'kiwico.com',
+        contacts: [{ name: 'Steven Holm', title: 'Director of Customer Care' }],
+      }],
+    });
+
+    await processBatch(batch.id);
+    const state = await getBatchReviewByToken(batch.review_token);
+    const contact = state.runs[0].review.contacts[0];
+    const rendered = JSON.stringify(contact);
+
+    expect(state.batch.play_id).toBe('bdr_cold_outbound');
+    expect(state.runs[0].review.run.play_id).toBe('bdr_cold_outbound');
+    expect(contact.email).toMatch(/^missing-contact-1\+kiwico@example\.invalid$/);
+    expect(contact.play_metadata?.play_id).toBe('bdr_cold_outbound');
+    expect(contact.qa_warnings.join(' ')).toMatch(/No verified contact email/);
+    expect(contact.emails.map((email) => email.original_step_number)).toContain(1);
+    expect(rendered).not.toMatch(/handoffs without the reset|full conversation history|before it becomes urgent/i);
+    expect(rendered).not.toMatch(/KUHL: 44% reduction in WISMO emails/i);
+  });
+
+  it('fails closed when BDR-confirming metadata is missing the durable play id', async () => {
+    const batch = await createBatch({
+      actor: { email: 'nate@example.com' },
+      cowork_thread_id: 'cowork-thread-123',
+      campaign_id: 'campaign-1',
+      play_metadata: {
+        intake: {
+          confirmed_play: 'bdr_cold_outbound',
+          user_request_summary: 'Run the BDR play for KiwiCo and Steven Holm.',
+        },
+      },
+      companies: [{
+        company_name: 'KiwiCo',
+        domain: 'kiwico.com',
+        contacts: [{ name: 'Steven Holm', title: 'Director of Customer Care' }],
+      }],
+    });
+
+    const processed = await processBatch(batch.id);
+    const state = await getBatchReviewByToken(batch.review_token);
+
+    expect(processed.status).toBe('partially_failed');
+    expect(state.batch.status).toBe('partially_failed');
+    expect(state.batch.error).toMatch(/durable play_id/i);
+    expect(state.runs).toHaveLength(0);
+  });
+
   it('pushes BDR reviewed drafts without requiring a third email', async () => {
     const batch = await createBatch({
       actor: { email: 'nate@example.com' },
@@ -157,5 +218,47 @@ describe('batch review flow', () => {
     expect(result.pushed).toBe(1);
     expect(calls[0].emails).toHaveLength(2);
     expect(calls[0].emails.map((email: any) => email.original_step_number)).toEqual([1, 4]);
+  });
+
+  it('does not queue unmapped BDR contacts for push', async () => {
+    const batch = await createBatch({
+      actor: { email: 'nate@example.com' },
+      cowork_thread_id: 'cowork-thread-123',
+      campaign_id: 'campaign-1',
+      play_id: 'bdr_cold_outbound',
+      companies: [{
+        company_name: 'Kizik',
+        domain: 'kizik.com',
+        contacts: [{ first_name: 'Casey', last_name: 'Morgan', title: 'Chief Marketing Officer', email: 'casey@example.com' }],
+      }],
+    });
+    await processBatch(batch.id);
+    const state = await getBatchReviewByToken(batch.review_token);
+    const contact = state.runs[0].review.contacts[0];
+
+    expect(contact.sequence_code).toBeUndefined();
+    expect(contact.play_metadata?.draft_generation_blocked).toBe(true);
+    expect(contact.emails[0].body_text).not.toMatch(/confirm the right BDR sequence|{{first_name}}/);
+
+    contact.status = 'approved';
+    contact.sequence_code = 'A-1';
+    contact.play_metadata = {};
+    await saveReviewState(state.runs[0].review.run.review_token, { contacts: [contact] }, 'reviewer@example.com');
+
+    const singleSaved = await getBatchReviewByToken(batch.review_token);
+    const singleSavedContact = singleSaved.runs[0].review.contacts[0];
+    expect(singleSavedContact.sequence_code).toBeUndefined();
+    expect(singleSavedContact.play_metadata?.draft_generation_blocked).toBe(true);
+    expect(singleSavedContact.status).toBe('approved');
+    await expect(submitBatchReview(batch.review_token, 'reviewer@example.com')).rejects.toThrow(/sendable sequence/);
+
+    singleSavedContact.sequence_code = 'A-1';
+    singleSavedContact.play_metadata = {};
+    await saveBatchReviewState(batch.review_token, { runs: [{ run_id: state.runs[0].run_id, contacts: [singleSavedContact] }] }, 'reviewer@example.com');
+
+    const batchSaved = await getBatchReviewByToken(batch.review_token);
+    expect(batchSaved.runs[0].review.contacts[0].sequence_code).toBeUndefined();
+    expect(batchSaved.runs[0].review.contacts[0].play_metadata?.draft_generation_blocked).toBe(true);
+    await expect(submitBatchReview(batch.review_token, 'reviewer@example.com')).rejects.toThrow(/sendable sequence/);
   });
 });

@@ -2,12 +2,17 @@ import crypto from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { createBatchSchema, createRunSchema, saveBatchReviewSchema, saveReviewSchema, type CreateBatchInput, type CreateRunInput, type SaveBatchReviewInput, type SaveReviewInput } from './schemas';
 import { query, transaction, iso } from './db';
+import { isSendableApprovedContact, SENDABLE_APPROVED_CONTACT_ERROR } from './review-push-eligibility';
 import type { Batch, BatchReviewState, BatchRun, Contact, CoworkMessage, InstantlyPushPayload, ResearchArtifact, ReviewContact, ReviewEvent, ReviewState, Run, SequenceEmail, Account, AppUser, CoworkActor } from './types';
 
 const now = () => new Date().toISOString();
 const id = (prefix: string) => `${prefix}_${crypto.randomUUID()}`;
 const reviewToken = () => crypto.randomBytes(32).toString('hex');
 const tokenHash = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
+
+type SaveReviewOptions = {
+  allowServerOwnedContactFields?: boolean;
+};
 
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)); }
 
@@ -251,7 +256,7 @@ export async function getReviewStateByToken(token: string): Promise<ReviewState>
   return clone({ run, contacts: reviewContacts });
 }
 
-export async function saveReviewState(token: string, input: SaveReviewInput, actor = 'anonymous'): Promise<{ ok: true; saved_at: string }> {
+export async function saveReviewState(token: string, input: SaveReviewInput, actor = 'anonymous', options: SaveReviewOptions = {}): Promise<{ ok: true; saved_at: string }> {
   const parsed = saveReviewSchema.safeParse(input);
   if (!parsed.success) throw new Error(`Invalid review payload: ${parsed.error.message}`);
   const state = await getReviewStateByToken(token);
@@ -262,16 +267,20 @@ export async function saveReviewState(token: string, input: SaveReviewInput, act
       if (!existingResult.rows[0]) throw new Error(`Contact not found for review token: ${incoming.id}`);
       const existing = toContact(existingResult.rows[0]);
       const before = { ...existing, emails: await emailsForContact(existing.id, client) };
+      const sequenceCode = options.allowServerOwnedContactFields ? incoming.sequence_code ?? null : existing.sequence_code ?? null;
+      const playMetadata = options.allowServerOwnedContactFields
+        ? incoming.play_metadata ?? existing.play_metadata ?? {}
+        : existing.play_metadata ?? {};
       await client.query(
         `update contacts set status=$2, primary_angle=$3, opening_hook=$4, proof_used=$5, guardrail=$6, sequence_code=$7, play_metadata_json=$8::jsonb, evidence_json=$9::jsonb, qa_warnings_json=$10::jsonb, updated_at=$11 where id=$1`,
-        [incoming.id, incoming.status, incoming.primary_angle ?? null, incoming.opening_hook ?? null, incoming.proof_used ?? null, incoming.guardrail ?? null, incoming.sequence_code ?? null, JSON.stringify(incoming.play_metadata ?? existing.play_metadata ?? {}), JSON.stringify(incoming.evidence_urls ?? existing.evidence_urls), JSON.stringify(incoming.qa_warnings ?? existing.qa_warnings), timestamp],
+        [incoming.id, incoming.status, incoming.primary_angle ?? null, incoming.opening_hook ?? null, incoming.proof_used ?? null, incoming.guardrail ?? null, sequenceCode, JSON.stringify(playMetadata), JSON.stringify(incoming.evidence_urls ?? existing.evidence_urls), JSON.stringify(incoming.qa_warnings ?? existing.qa_warnings), timestamp],
       );
       for (const email of incoming.emails) {
         const emailResult = await client.query('select * from sequence_emails where contact_id=$1 and step_number=$2', [existing.id, email.step_number]);
         if (!emailResult.rows[0]) throw new Error(`Email step ${email.step_number} not found for ${existing.email}`);
         await client.query(
-          `update sequence_emails set subject=$3, body_html=$4, body_text=$5, original_step_number=$6, step_label=$7, edited_by=$8, edited_at=$9, updated_at=$9 where contact_id=$1 and step_number=$2`,
-          [existing.id, email.step_number, email.subject, email.body_html, email.body_text ?? stripHtml(email.body_html), email.original_step_number ?? null, email.step_label ?? null, actor, timestamp],
+          `update sequence_emails set subject=$3, body_html=$4, body_text=$5, original_step_number=$6, step_label=$7, original_subject=$8, original_body_html=$9, edited_by=$10, edited_at=$11, updated_at=$11 where contact_id=$1 and step_number=$2`,
+          [existing.id, email.step_number, email.subject, email.body_html, email.body_text ?? stripHtml(email.body_html), email.original_step_number ?? null, email.step_label ?? null, email.original_subject ?? email.subject, email.original_body_html ?? email.body_html, actor, timestamp],
         );
       }
       await client.query('delete from sequence_emails where contact_id=$1 and not (step_number = any($2::int[]))', [existing.id, incoming.emails.map((email) => email.step_number)]);
@@ -286,8 +295,8 @@ export async function saveReviewState(token: string, input: SaveReviewInput, act
 
 export async function submitApproved(token: string, actor = 'anonymous'): Promise<{ ok: true; approved_count: number; push_job_id: string; status: string }> {
   const state = await getReviewStateByToken(token);
-  const approved = state.contacts.filter((c) => c.status === 'approved');
-  if (approved.length === 0) throw new Error('At least one approved contact is required before submit');
+  const approved = state.contacts.filter((contact) => isSendableApprovedContact(contact, state.run.play_id));
+  if (approved.length === 0) throw new Error(SENDABLE_APPROVED_CONTACT_ERROR);
   const timestamp = now();
   const idempotencyKey = `push:${state.run.id}`;
   return transaction(async (client) => {
@@ -317,7 +326,7 @@ export async function pushApprovedContacts(runId: string, pusher: InstantlyPushe
   await query(`update runs set status='pushing', updated_at=$2 where id=$1`, [run.id, now()]);
   let pushed = 0;
   let failed = 0;
-  const contacts = (await contactsForRun(run.id)).filter((c) => c.status === 'approved' && c.email && !c.email.endsWith('.invalid'));
+  const contacts = (await contactsForRun(run.id)).filter((contact) => isSendableApprovedContact(contact, run.play_id));
   for (const contact of contacts) {
     const key = `${run.id}:${contact.id}`;
     const existing = await query('select id from pushed_contacts where run_id=$1 and contact_id=$2', [run.id, contact.id]);
@@ -380,6 +389,9 @@ export async function createBatch(input: CreateBatchInput): Promise<Batch & { co
   const parsed = createBatchSchema.safeParse(input);
   if (!parsed.success) throw new Error(`Invalid batch payload: ${parsed.error.message}`);
   const data = parsed.data;
+  const playMetadata = data.target_persona
+    ? { ...(data.play_metadata ?? {}), target_persona: data.target_persona }
+    : data.play_metadata;
   const actor = data.actor ?? [data.user_email, data.requested_by_email, data.actor_email, data.created_by_email, data.requested_by]
     .map((email) => {
       try { return email ? { email: normalizeActorEmail(email) } : null; } catch { return null; }
@@ -393,7 +405,7 @@ export async function createBatch(input: CreateBatchInput): Promise<Batch & { co
   const result = await query(
     `insert into batches (id, source, status, play_id, play_metadata_json, requested_by, account_id, created_by_user_id, cowork_thread_id, campaign_id, mode, review_token_hash, review_url, companies_json, created_at, updated_at)
      values ($1,$2,'queued',$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$14) returning *`,
-    [id('batch'), data.source, data.play_id ?? null, JSON.stringify(data.play_metadata ?? {}), ownerEmail ?? null, owner?.account.id ?? null, owner?.user.id ?? null, data.cowork_thread_id ?? null, data.campaign_id ?? null, data.mode, tokenHash(token), reviewUrl, JSON.stringify(data.companies), timestamp],
+    [id('batch'), data.source, data.play_id ?? null, JSON.stringify(playMetadata ?? {}), ownerEmail ?? null, owner?.account.id ?? null, owner?.user.id ?? null, data.cowork_thread_id ?? null, data.campaign_id ?? null, data.mode, tokenHash(token), reviewUrl, JSON.stringify(data.companies), timestamp],
   );
   return clone(toBatch(result.rows[0], token));
 }
@@ -466,7 +478,7 @@ export async function saveBatchReviewState(token: string, input: SaveBatchReview
     // Save directly without needing original single-run token.
     await transaction(async (client) => {
       for (const incoming of runInput.contacts) {
-        const contactUpdate = await client.query(`update contacts set status=$2, primary_angle=$3, opening_hook=$4, proof_used=$5, guardrail=$6, sequence_code=$7, play_metadata_json=$8::jsonb, evidence_json=$9::jsonb, qa_warnings_json=$10::jsonb, updated_at=$11 where id=$1 and run_id=$12`, [incoming.id, incoming.status, incoming.primary_angle ?? null, incoming.opening_hook ?? null, incoming.proof_used ?? null, incoming.guardrail ?? null, incoming.sequence_code ?? null, JSON.stringify(incoming.play_metadata ?? {}), JSON.stringify(incoming.evidence_urls ?? []), JSON.stringify(incoming.qa_warnings ?? []), now(), runInput.run_id]);
+        const contactUpdate = await client.query(`update contacts set status=$2, primary_angle=$3, opening_hook=$4, proof_used=$5, guardrail=$6, evidence_json=$7::jsonb, qa_warnings_json=$8::jsonb, updated_at=$9 where id=$1 and run_id=$10`, [incoming.id, incoming.status, incoming.primary_angle ?? null, incoming.opening_hook ?? null, incoming.proof_used ?? null, incoming.guardrail ?? null, JSON.stringify(incoming.evidence_urls ?? []), JSON.stringify(incoming.qa_warnings ?? []), now(), runInput.run_id]);
         if (contactUpdate.rowCount !== 1) throw new Error(`Contact ${incoming.id} does not belong to batch run ${runInput.run_id}`);
         for (const email of incoming.emails) {
           const emailUpdate = await client.query(`update sequence_emails set subject=$3, body_html=$4, body_text=$5, original_step_number=$6, step_label=$7, edited_by=$8, edited_at=$9, updated_at=$9 where contact_id=$1 and step_number=$2`, [incoming.id, email.step_number, email.subject, email.body_html, email.body_text ?? stripHtml(email.body_html), email.original_step_number ?? null, email.step_label ?? null, actor, now()]);
@@ -484,16 +496,22 @@ export async function submitBatchReview(token: string, actor = 'anonymous') {
   let approved = 0;
   const push_job_ids: string[] = [];
   for (const item of state.runs) {
-    const good = item.review.contacts.filter((c) => c.status === 'approved' && c.email && !c.email.endsWith('.invalid'));
+    const good = item.review.contacts.filter((contact) => isSendableApprovedContact(contact, item.review.run.play_id));
     approved += good.length;
     if (good.length) {
       await query(`update runs set status='review_submitted', updated_at=$2 where id=$1`, [item.run_id, now()]);
       const jobId = id('push');
-      await query(`insert into push_jobs (id, run_id, status, instantly_campaign_id, idempotency_key, attempts, created_at, updated_at) values ($1,$2,'queued',$3,$4,0,$5,$5) on conflict (idempotency_key) do nothing`, [jobId, item.run_id, item.review.run.campaign_id ?? null, `push:${item.run_id}`, now()]);
-      push_job_ids.push(jobId);
+      const jobResult = await query(
+        `insert into push_jobs (id, run_id, status, instantly_campaign_id, idempotency_key, attempts, created_at, updated_at)
+         values ($1,$2,'queued',$3,$4,0,$5,$5)
+         on conflict (idempotency_key) do update set updated_at=push_jobs.updated_at
+         returning id`,
+        [jobId, item.run_id, item.review.run.campaign_id ?? null, `push:${item.run_id}`, now()],
+      );
+      push_job_ids.push(jobResult.rows[0].id);
     }
   }
-  if (approved === 0) throw new Error('At least one approved contact with a real email is required before submit');
+  if (approved === 0) throw new Error(SENDABLE_APPROVED_CONTACT_ERROR);
   await updateBatchStatus(state.batch.id, 'review_submitted');
   return { ok: true as const, batch_id: state.batch.id, approved_contacts: approved, push_job_ids, status: 'review_submitted', message: 'Approved contacts are queued for server-side Instantly push.' };
 }

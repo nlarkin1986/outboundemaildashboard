@@ -25,17 +25,41 @@ type ExaSearchResponse = {
   results?: ExaSearchResult[];
 };
 
+type FirecrawlScrapeResponse = {
+  success?: boolean;
+  data?: {
+    markdown?: string;
+    html?: string;
+    metadata?: {
+      title?: string;
+      sourceURL?: string;
+    };
+  };
+  error?: string;
+};
+
 async function exaSearch(body: Record<string, unknown>): Promise<ExaSearchResult[]> {
   const apiKey = process.env.EXA_API_KEY;
   if (!apiKey) return [];
-  const response = await fetch('https://api.exa.ai/search', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey,
-    },
-    body: JSON.stringify(body),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  let response: Response;
+  try {
+    response = await fetch('https://api.exa.ai/search', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': apiKey,
+      },
+      signal: controller.signal,
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    console.error('Exa search failed', { error: error instanceof Error ? error.message : String(error) });
+    return [];
+  } finally {
+    clearTimeout(timeout);
+  }
   if (!response.ok) {
     console.error('Exa search failed', { status: response.status });
     return [];
@@ -136,8 +160,49 @@ export async function findPeopleWithExa(companyName: string, domain?: string, ta
     .slice(0, 5);
 }
 
-export async function fetchWithBrowserbase(url: string): Promise<ResearchResult[]> {
-  if (!process.env.BROWSERBASE_API_KEY) return [];
-  // Production hook: use Browserbase/Playwright for JS-heavy or blocked pages.
-  return [{ source_url: url, quote_or_fact: 'Browserbase fallback fetched page content.', evidence_type: 'public_fact', confidence: 'medium' }];
+export async function scrapeWithFirecrawl(url: string, options: { timeoutMs?: number } = {}): Promise<ResearchResult[]> {
+  if (!process.env.FIRECRAWL_API_KEY) return [];
+  const timeoutMs = options.timeoutMs ?? 60000;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+  try {
+    response = await fetch('https://api.firecrawl.dev/v2/scrape', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${process.env.FIRECRAWL_API_KEY}`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        url,
+        formats: ['markdown'],
+        onlyMainContent: true,
+        removeBase64Images: true,
+        blockAds: true,
+        proxy: 'auto',
+        timeout: timeoutMs,
+        maxAge: 0,
+      }),
+    });
+  } catch (error) {
+    console.error('Firecrawl scrape failed', { url, error: error instanceof Error ? error.message : String(error) });
+    return [];
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (!response.ok) {
+    console.error('Firecrawl scrape failed', { url, status: response.status });
+    return [];
+  }
+  const data = await response.json() as FirecrawlScrapeResponse;
+  const content = cleanText(data.data?.markdown ?? data.data?.html).slice(0, 1600);
+  if (!content) return [];
+  return [{
+    source_url: data.data?.metadata?.sourceURL ?? url,
+    source_title: data.data?.metadata?.title,
+    quote_or_fact: content,
+    evidence_type: 'public_fact',
+    confidence: data.success === false ? 'low' : 'medium',
+  }];
 }

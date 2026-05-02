@@ -119,6 +119,7 @@ export function renderBdrWorkflowOutput({
     if (!input.title) warnings.push('Contact title is required for BDR sequence mapping.');
 
     if (!plan?.sequence_code) {
+      const blockedBody = 'BDR email draft was not generated because this contact needs a supported BDR persona and sequence mapping.';
       outputContacts.push({
         email,
         first_name: names.first_name,
@@ -130,16 +131,23 @@ export function renderBdrWorkflowOutput({
         proof_used: plan?.evidence_claims[0] ?? 'No template selected.',
         guardrail: 'Do not approve until brand type, title, and sequence mapping are confirmed.',
         sequence_code: undefined,
-        play_metadata: { play_id: BDR_PLAY_ID, brand: plan?.sequence?.brand, persona: plan?.sequence?.persona, sequence_plan_confidence: plan?.confidence },
+        play_metadata: {
+          play_id: BDR_PLAY_ID,
+          brand: plan?.sequence?.brand,
+          persona: plan?.sequence?.persona,
+          sequence_plan_confidence: plan?.confidence,
+          draft_generation_blocked: true,
+          blocked_reason: 'missing_bdr_sequence_mapping',
+        },
         evidence_urls: plan?.evidence_urls ?? [],
         qa_warnings: warnings,
         emails: [{
           step_number: 1,
           original_step_number: 1,
           step_label: 'Step 1: Email · needs sequence mapping',
-          subject: 'Sequence mapping needed',
-          body_text: '{{first_name}}, confirm the right BDR sequence before sending.',
-          body_html: '<p>{{first_name}}, confirm the right BDR sequence before sending.</p>',
+          subject: 'BDR sequence unavailable',
+          body_text: blockedBody,
+          body_html: html(blockedBody),
         }],
       });
       return;
@@ -175,8 +183,8 @@ export function renderBdrWorkflowOutput({
       title: input.title,
       company: input.company ?? company.company_name,
       primary_angle: `${sequence.brand_label} x ${sequence.persona_label}: ${plan.sequence_code}`,
-      opening_hook: step1Personalization ?? `BDR ${plan.sequence_code} template fallback used for ${company.company_name}.`,
-      proof_used: step4Personalization ?? plan.evidence_claims[0] ?? 'Template benchmark fallback used.',
+      opening_hook: step1Personalization ?? `${sequence.brand_label} sequence selected for ${company.company_name}; Step 1 uses the non-personalized opener because public evidence was weak.`,
+      proof_used: step4Personalization ?? plan.evidence_claims[0] ?? `Step 4 uses the benchmark fallback for ${sequence.brand_label.toLowerCase()} because public evidence did not meet the personalization threshold.`,
       guardrail: 'Review all public-source personalization before approving. Merge tokens must stay intact.',
       sequence_code: plan.sequence_code,
       play_metadata: {

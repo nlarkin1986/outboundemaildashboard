@@ -1,5 +1,6 @@
 import type { CompanyInput } from '@/lib/schemas';
-import { researchPlaceholdersForBdrSequence, type BdrResearchProvider } from './research';
+import { defaultBdrResearchProvider, researchPlaceholdersForBdrSequence, type BdrResearchProvider } from './research';
+import { researchBdrPlaceholdersWithAgent } from './research-agent';
 import { sanitizeBdrPersonalizationValue } from './personalization';
 import { sequenceFor } from './sequences';
 import type { BdrLookupKey, BdrPersonalizationInsert, BdrPlaceholderResearch, BdrSequencePlan } from './types';
@@ -48,15 +49,27 @@ export async function researchBdrPlaceholders({
   company,
   plan,
   researchProvider,
+  useSynthesisAgent,
 }: {
   company: CompanyInput;
   plan: BdrSequencePlan;
   researchProvider: BdrResearchProvider;
+  useSynthesisAgent?: boolean;
 }): Promise<BdrPlaceholderResearch | undefined> {
   if (!plan.sequence_code) return undefined;
   const sequence = sequenceFor(plan.sequence_code);
-  const research = await researchPlaceholdersForBdrSequence(company, sequence, researchProvider);
+  const deterministicResearch = await researchPlaceholdersForBdrSequence(company, sequence, researchProvider);
+  const shouldUseSynthesisAgent = useSynthesisAgent ?? researchProvider === defaultBdrResearchProvider;
+  const agentResearch = shouldUseSynthesisAgent
+    ? await researchBdrPlaceholdersWithAgent({ company, sequence, research: deterministicResearch }).catch((error) => ({
+      step1: undefined,
+      step4: undefined,
+      warnings: [`BDR synthesis agent failed; used deterministic dossier selection: ${error instanceof Error ? error.message : String(error)}`],
+    }))
+    : undefined;
+  const research = agentResearch?.step1 && agentResearch.step4 ? agentResearch : deterministicResearch;
   const warnings = [research.step1.warning, research.step4.warning].filter(Boolean) as string[];
+  if (agentResearch?.warnings) warnings.push(...agentResearch.warnings);
 
   return {
     sequence_code: plan.sequence_code,

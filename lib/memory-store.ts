@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { createBatchSchema, createRunSchema, saveBatchReviewSchema, saveReviewSchema, type CreateBatchInput, type CreateRunInput, type SaveBatchReviewInput, type SaveReviewInput } from './schemas';
+import { isSendableApprovedContact, SENDABLE_APPROVED_CONTACT_ERROR } from './review-push-eligibility';
 import type { Batch, BatchReviewState, BatchRun, Contact, CoworkMessage, InstantlyPushPayload, PushJob, ResearchArtifact, ReviewContact, ReviewEvent, ReviewState, Run, SequenceEmail, Account, AppUser, CoworkActor } from './types';
 
 type Db = {
@@ -29,6 +30,10 @@ globalForStore.__outboundStore = db;
 const now = () => new Date().toISOString();
 const id = (prefix: string) => `${prefix}_${crypto.randomUUID()}`;
 const reviewToken = () => crypto.randomBytes(32).toString('hex');
+
+type SaveReviewOptions = {
+  allowServerOwnedContactFields?: boolean;
+};
 
 export function resetStore() {
   db.accounts.clear();
@@ -203,7 +208,7 @@ export async function getReviewStateByToken(token: string): Promise<ReviewState>
   return clone({ run, contacts });
 }
 
-export async function saveReviewState(token: string, input: SaveReviewInput, actor = 'anonymous'): Promise<{ ok: true; saved_at: string }> {
+export async function saveReviewState(token: string, input: SaveReviewInput, actor = 'anonymous', options: SaveReviewOptions = {}): Promise<{ ok: true; saved_at: string }> {
   const parsed = saveReviewSchema.safeParse(input);
   if (!parsed.success) throw new Error(`Invalid review payload: ${parsed.error.message}`);
   const state = await getReviewStateByToken(token);
@@ -217,8 +222,10 @@ export async function saveReviewState(token: string, input: SaveReviewInput, act
     existing.opening_hook = incoming.opening_hook;
     existing.proof_used = incoming.proof_used;
     existing.guardrail = incoming.guardrail;
-    existing.sequence_code = incoming.sequence_code;
-    existing.play_metadata = incoming.play_metadata;
+    if (options.allowServerOwnedContactFields) {
+      existing.sequence_code = incoming.sequence_code;
+      existing.play_metadata = incoming.play_metadata;
+    }
     existing.evidence_urls = incoming.evidence_urls ?? existing.evidence_urls;
     existing.qa_warnings = incoming.qa_warnings ?? existing.qa_warnings;
     const incomingSteps = new Set(incoming.emails.map((email) => email.step_number));
@@ -226,6 +233,8 @@ export async function saveReviewState(token: string, input: SaveReviewInput, act
       const row = emailsForContact(existing.id).find((e) => e.step_number === email.step_number);
       if (!row) throw new Error(`Email step ${email.step_number} not found for ${existing.email}`);
       row.subject = email.subject;
+      row.original_subject = email.original_subject ?? row.original_subject;
+      row.original_body_html = email.original_body_html ?? row.original_body_html;
       row.original_step_number = email.original_step_number ?? row.original_step_number;
       row.step_label = email.step_label ?? row.step_label;
       row.body_html = email.body_html;
@@ -245,8 +254,8 @@ export async function saveReviewState(token: string, input: SaveReviewInput, act
 
 export async function submitApproved(token: string, actor = 'anonymous'): Promise<{ ok: true; approved_count: number; push_job_id: string; status: string }> {
   const state = await getReviewStateByToken(token);
-  const approved = state.contacts.filter((c) => c.status === 'approved');
-  if (approved.length === 0) throw new Error('At least one approved contact is required before submit');
+  const approved = state.contacts.filter((contact) => isSendableApprovedContact(contact, state.run.play_id));
+  if (approved.length === 0) throw new Error(SENDABLE_APPROVED_CONTACT_ERROR);
   const timestamp = now();
   const run = getRunOrThrow(state.run.id);
   const idempotencyKey = `push:${run.id}`;
@@ -272,7 +281,7 @@ export async function pushApprovedContacts(runId: string, pusher: InstantlyPushe
   run.updated_at = now();
   let pushed = 0;
   let failed = 0;
-  for (const contact of contactsForRun(run.id).filter((c) => c.status === 'approved' && c.email && !c.email.endsWith('.invalid'))) {
+  for (const contact of contactsForRun(run.id).filter((candidate) => isSendableApprovedContact(candidate, run.play_id))) {
     const key = `${run.id}:${contact.id}`;
     if (db.pushedContacts.has(key)) continue;
     db.pushedContacts.add(key);
@@ -300,6 +309,14 @@ export function reviewUrlForRun(run: Run) {
 
 function tokenForBatch() { return reviewToken(); }
 
+function batchPlayMetadata(data: CreateBatchInput) {
+  if (!data.target_persona) return data.play_metadata;
+  return {
+    ...(data.play_metadata ?? {}),
+    target_persona: data.target_persona,
+  };
+}
+
 export async function createBatch(input: CreateBatchInput): Promise<Batch & { companies: Array<{ company_name: string; domain?: string; contacts?: any[] }> }> {
   const parsed = createBatchSchema.safeParse(input);
   if (!parsed.success) throw new Error(`Invalid batch payload: ${parsed.error.message}`);
@@ -318,7 +335,7 @@ export async function createBatch(input: CreateBatchInput): Promise<Batch & { co
     source: data.source,
     status: 'queued',
     play_id: data.play_id,
-    play_metadata: data.play_metadata,
+    play_metadata: batchPlayMetadata(data),
     requested_by: ownerEmail,
     account_id: owner?.account.id,
     created_by_user_id: owner?.user.id,
@@ -417,14 +434,14 @@ export async function submitBatchReview(token: string, actor = 'anonymous') {
   let approved = 0;
   const push_job_ids: string[] = [];
   for (const item of state.runs) {
-    const approvedContacts = item.review.contacts.filter((c) => c.status === 'approved' && c.email && !c.email.endsWith('.invalid'));
+    const approvedContacts = item.review.contacts.filter((contact) => isSendableApprovedContact(contact, item.review.run.play_id));
     approved += approvedContacts.length;
     if (approvedContacts.length) {
       const result = await submitApproved(item.review.run.review_token, actor);
       push_job_ids.push(result.push_job_id);
     }
   }
-  if (approved === 0) throw new Error('At least one approved contact with a real email is required before submit');
+  if (approved === 0) throw new Error(SENDABLE_APPROVED_CONTACT_ERROR);
   await updateBatchStatus(state.batch.id, 'review_submitted');
   return { ok: true as const, batch_id: state.batch.id, approved_contacts: approved, push_job_ids, status: 'review_submitted', message: 'Approved contacts are queued for server-side Instantly push.' };
 }

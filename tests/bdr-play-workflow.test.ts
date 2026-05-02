@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runBdrPlayWorkflow } from '@/lib/plays/bdr/workflow-runner';
-import type { BdrResearchProvider } from '@/lib/plays/bdr/research';
+import { defaultBdrResearchProvider, type BdrResearchProvider } from '@/lib/plays/bdr/research';
 
 function provider(overrides: Partial<BdrResearchProvider> = {}): BdrResearchProvider {
   return {
@@ -16,6 +16,11 @@ function provider(overrides: Partial<BdrResearchProvider> = {}): BdrResearchProv
 }
 
 describe('BDR play workflow runner', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
   it('runs sequence planning before placeholder research and renders review output', async () => {
     const researchProvider = provider();
 
@@ -50,7 +55,9 @@ describe('BDR play workflow runner', () => {
     expect(result.placeholder_research).toHaveLength(0);
     expect(result.output.contacts[0].sequence_code).toBeUndefined();
     expect(result.output.contacts[0].qa_warnings.join(' ')).toMatch(/Unsupported persona/);
-    expect(result.output.contacts[0].emails[0].subject).toBe('Sequence mapping needed');
+    expect(result.output.contacts[0].play_metadata).toMatchObject({ draft_generation_blocked: true });
+    expect(result.output.contacts[0].emails[0].subject).toBe('BDR sequence unavailable');
+    expect(result.output.contacts[0].emails[0].body_text).not.toMatch(/confirm the right BDR sequence|{{first_name}}/);
   });
 
   it('plans and drafts a Quince.com BDR scenario from account evidence', async () => {
@@ -100,6 +107,120 @@ describe('BDR play workflow runner', () => {
     expect(result.output.contacts[0].emails[1].body_text).toContain('fit and sizing questions');
     expect(researchProvider.complexProduct).not.toHaveBeenCalled();
     expect(researchProvider.supportJobs).not.toHaveBeenCalled();
+  });
+
+  it('keeps weak-evidence fallback labels reviewer-facing instead of internal', async () => {
+    const researchProvider = provider({
+      heroProduct: vi.fn(async () => ({ warning: 'No product signal found.', evidence_urls: [] })),
+      reviewPattern: vi.fn(async () => ({ warning: 'No repeated review pattern found; used Step 4 Version B.', evidence_urls: [] })),
+    });
+
+    const result = await runBdrPlayWorkflow({
+      company: {
+        company_name: 'Kizik',
+        domain: 'kizik.com',
+        contacts: [{ first_name: 'Alex', last_name: 'Morgan', title: 'VP of Customer Experience', email: 'alex@example.com' }],
+      },
+      researchProvider,
+    });
+    const contact = result.output.contacts[0];
+
+    expect(contact.sequence_code).toBe('A-1');
+    expect(contact.opening_hook).toMatch(/non-personalized opener/i);
+    expect(`${contact.opening_hook} ${contact.proof_used}`).not.toMatch(/BDR A-1 template fallback used|Template benchmark fallback used/);
+    expect(contact.emails[0].body_text).toContain('CX teams we work with are seeing sizing questions');
+    expect(contact.emails[1].body_text).toContain('We have benchmarks for cart abandonment recovery');
+  });
+
+  it('reuses placeholder research for contacts at the same company with the same sequence', async () => {
+    const researchProvider = provider({
+      accountResearch: vi.fn(async () => [{
+        source_url: 'https://www.quince.com/',
+        source_title: 'Quince',
+        quote_or_fact: 'Quince sells apparel, clothing, cashmere sweaters, washable silk, and home goods online.',
+        evidence_type: 'public_fact' as const,
+        confidence: 'medium' as const,
+      }]),
+      heroProduct: vi.fn(async () => ({ value: 'washable silk collection', evidence_urls: ['https://www.quince.com/women/silk'] })),
+      reviewPattern: vi.fn(async () => ({ value: 'fit and sizing questions show up in customer reviews', evidence_urls: ['https://example.com/quince-reviews'] })),
+    });
+
+    const result = await runBdrPlayWorkflow({
+      company: {
+        company_name: 'Quince',
+        domain: 'quince.com',
+        contacts: [
+          { name: 'Jordan Lee', title: 'VP of Customer Experience', email: 'jordan@example.com' },
+          { name: 'Taylor Kim', title: 'Director of Customer Experience', email: 'taylor@example.com' },
+        ],
+      },
+      researchProvider,
+    });
+
+    expect(result.output.contacts).toHaveLength(2);
+    expect(result.output.contacts.map((contact) => contact.sequence_code)).toEqual(['A-1', 'A-1']);
+    expect(result.placeholder_research).toHaveLength(2);
+    expect(researchProvider.accountResearch).toHaveBeenCalledTimes(1);
+    expect(researchProvider.heroProduct).toHaveBeenCalledTimes(1);
+    expect(researchProvider.reviewPattern).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses same lookup research across different sequences for the same company', async () => {
+    const researchProvider = provider({
+      accountResearch: vi.fn(async () => [{
+        source_url: 'https://www.kizik.com/',
+        source_title: 'Kizik',
+        quote_or_fact: 'Kizik sells hands-free sneakers where fit, sizing, returns, and pre-purchase shoe questions matter.',
+        evidence_type: 'public_fact' as const,
+        confidence: 'medium' as const,
+      }]),
+      heroProduct: vi.fn(async () => ({ value: 'Prague hands-free sneaker', evidence_urls: ['https://www.kizik.com/products/prague'] })),
+      reviewPattern: vi.fn(async () => ({ value: 'fit and sizing questions show up in customer reviews', evidence_urls: ['https://example.com/kizik-reviews'] })),
+    });
+
+    const result = await runBdrPlayWorkflow({
+      company: {
+        company_name: 'Kizik',
+        domain: 'kizik.com',
+        contacts: [
+          { name: 'Alex Morgan', title: 'VP of Customer Experience', email: 'alex@example.com' },
+          { name: 'Sam Lee', title: 'Director of Ecommerce', email: 'sam@example.com' },
+        ],
+      },
+      researchProvider,
+    });
+
+    expect(result.output.contacts.map((contact) => contact.sequence_code)).toEqual(['A-1', 'D-1']);
+    expect(researchProvider.heroProduct).toHaveBeenCalledTimes(1);
+    expect(researchProvider.reviewPattern).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses same lookup research across different sequences with the default provider', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    vi.spyOn(defaultBdrResearchProvider, 'accountResearch').mockResolvedValue([{
+      source_url: 'https://www.kizik.com/',
+      source_title: 'Kizik',
+      quote_or_fact: 'Kizik sells hands-free sneakers where fit, sizing, returns, and pre-purchase shoe questions matter.',
+      evidence_type: 'public_fact',
+      confidence: 'medium',
+    }]);
+    const heroProduct = vi.spyOn(defaultBdrResearchProvider, 'heroProduct').mockResolvedValue({ value: 'Prague hands-free sneaker', evidence_urls: ['https://www.kizik.com/products/prague'] });
+    const reviewPattern = vi.spyOn(defaultBdrResearchProvider, 'reviewPattern').mockResolvedValue({ value: 'fit and sizing questions show up in customer reviews', evidence_urls: ['https://example.com/kizik-reviews'] });
+
+    const result = await runBdrPlayWorkflow({
+      company: {
+        company_name: 'Kizik',
+        domain: 'kizik.com',
+        contacts: [
+          { name: 'Alex Morgan', title: 'VP of Customer Experience', email: 'alex@example.com' },
+          { name: 'Sam Lee', title: 'Director of Ecommerce', email: 'sam@example.com' },
+        ],
+      },
+    });
+
+    expect(result.output.contacts.map((contact) => contact.sequence_code)).toEqual(['A-1', 'D-1']);
+    expect(heroProduct).toHaveBeenCalledTimes(1);
+    expect(reviewPattern).toHaveBeenCalledTimes(1);
   });
 
   it('turns noisy public research into concise sales-rep personalization', async () => {

@@ -4,11 +4,13 @@ description: >
   Cowork orchestration skill for Gladly outbound sequence requests. Use when a
   user asks to sequence accounts, run outreach, build outbound for companies, or
   prepare BDR outreach. Ask whether they want a fully custom sequence or the BDR
-  outreach sequence play. Only the BDR play sets play_id to bdr_cold_outbound;
-  the fully custom path omits play_id and uses the generic outbound workflow.
+  outreach sequence play when intent is ambiguous. Send request_context so the
+  Vercel AI SDK intake agent can select the BDR play and fill play metadata.
 ---
 
 # Account Sequencer
+
+Revision: `bdr-vercel-pipeline-2026-05-01`
 
 Use this skill to route outbound sequence requests into the Gladly approval
 workflow. The skill does not write final email copy inline. It creates a
@@ -36,7 +38,9 @@ If the user selects a fully custom sequence:
 5. Return the review URL and dashboard status URL.
 
 There is no custom `play_id` today. Omitting `play_id` is the current
-generic/custom research-to-sequence workflow.
+generic/custom research-to-sequence workflow. The backend routes that path to
+the generic Vercel AI SDK company agent, using the supplied `target_persona`
+and `request_context` when present.
 
 ### BDR outreach sequence play
 
@@ -53,17 +57,22 @@ Then collect the input from the selected format:
 - Pasted accounts: collect company/account names. Domains, contacts, titles, and
   emails are optional.
 
-For BDR, call `create_outbound_sequence` with:
+For BDR, call `create_outbound_sequence` with `request_context` and, when the
+selection is explicit, `play_id`:
 
 ```json
 {
+  "request_context": "Run the BDR outreach sequence play for these accounts.",
   "play_id": "bdr_cold_outbound"
 }
 ```
 
-The Vercel workflow chooses the exact BDR sequence, discovers account-matched
-contacts when contacts are missing, researches placeholders, renders the email
-sequence, previews the LinkedIn note, and saves warnings into the review flow.
+The Vercel AI SDK intake agent can also infer `play_id:
+"bdr_cold_outbound"` and fill `play_metadata.intake` from `request_context`
+when Cowork omits it. The Vercel workflow then chooses the exact BDR sequence,
+discovers account-matched contacts when contacts are missing, researches
+placeholders, renders the email sequence, previews the LinkedIn note, and saves
+warnings into the review flow.
 
 ## Required behavior
 

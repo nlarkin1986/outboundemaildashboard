@@ -1,5 +1,7 @@
 # Polling
 
+Revision: `bdr-vercel-pipeline-2026-05-01`
+
 After calling `create_outbound_sequence`, treat `batch_id` as the durable handle.
 Do not create another batch to check progress.
 
@@ -40,3 +42,8 @@ and stop polling unless they ask to check again.
 
 Do not paste generated email bodies, LinkedIn notes, or raw research payloads
 into Cowork as the primary result. The dashboard is the source of truth.
+
+For BDR-selected requests, stop and report a routing issue if
+`diagnostics.processing_route` is `generic_company_agent` or if the returned
+`diagnostics.deployment.contract_revision` does not match the installed skill
+revision.

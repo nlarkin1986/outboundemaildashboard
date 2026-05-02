@@ -1,7 +1,18 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createBdrSequencePlans } from '@/lib/plays/bdr/sequence-plan';
 import { researchBdrPlaceholders } from '@/lib/plays/bdr/placeholder-research';
-import type { BdrResearchProvider } from '@/lib/plays/bdr/research';
+import { defaultBdrResearchProvider, type BdrResearchProvider } from '@/lib/plays/bdr/research';
+
+const generateTextMock = vi.hoisted(() => vi.fn());
+
+vi.mock('ai', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('ai')>();
+  return { ...actual, generateText: generateTextMock };
+});
+
+vi.mock('@ai-sdk/anthropic', () => ({
+  anthropic: vi.fn(() => ({ provider: 'mock-anthropic', modelId: 'mock-model' })),
+}));
 
 function provider(overrides: Partial<BdrResearchProvider> = {}): BdrResearchProvider {
   return {
@@ -17,6 +28,12 @@ function provider(overrides: Partial<BdrResearchProvider> = {}): BdrResearchProv
 }
 
 describe('BDR placeholder research pass', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    generateTextMock.mockReset();
+    vi.restoreAllMocks();
+  });
+
   it('researches only the selected sequence placeholder lookups', async () => {
     const researchProvider = provider();
     const { plans } = await createBdrSequencePlans({
@@ -83,5 +100,153 @@ describe('BDR placeholder research pass', () => {
     expect(result?.warnings.join(' ')).toMatch(/No repeated review pattern/);
     expect(result?.step4.value).toBeUndefined();
     expect(result?.step4.insert).toMatchObject({ fallback_used: true, confidence: 'low' });
+  });
+
+  it('starts Step 1 and Step 4 placeholder lookups concurrently', async () => {
+    let resolveHeroProduct: (value: Awaited<ReturnType<BdrResearchProvider['heroProduct']>>) => void;
+    const calls: string[] = [];
+    const researchProvider = provider({
+      heroProduct: vi.fn(() => new Promise<Awaited<ReturnType<BdrResearchProvider['heroProduct']>>>((resolve) => {
+        calls.push('hero_product');
+        resolveHeroProduct = resolve;
+      })),
+      reviewPattern: vi.fn(async () => {
+        calls.push('review_pattern');
+        return { value: 'sizing questions appear in negative reviews', evidence_urls: ['https://example.com/reviews'] };
+      }),
+    });
+    const { plans } = await createBdrSequencePlans({
+      company: {
+        company_name: 'Kizik',
+        domain: 'kizik.com',
+        contacts: [{ first_name: 'Alex', title: 'VP of Customer Experience', email: 'alex@example.com' }],
+      },
+      contacts: [{ first_name: 'Alex', title: 'VP of Customer Experience', email: 'alex@example.com' }],
+      researchProvider,
+    });
+
+    const resultPromise = researchBdrPlaceholders({
+      company: { company_name: 'Kizik', domain: 'kizik.com' },
+      plan: plans[0],
+      researchProvider,
+      useSynthesisAgent: false,
+    });
+
+    await vi.waitFor(() => expect(researchProvider.reviewPattern).toHaveBeenCalledTimes(1));
+    expect(calls).toEqual(['hero_product', 'review_pattern']);
+    resolveHeroProduct!({ value: 'Prague hands-free sneaker', evidence_urls: ['https://example.com/product'] });
+    await expect(resultPromise).resolves.toMatchObject({ sequence_code: 'A-1' });
+  });
+
+  it('falls back to deterministic inserts when structured synthesis rejects', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'test-key');
+    generateTextMock.mockRejectedValueOnce(new Error('provider unavailable'));
+    const researchProvider = provider();
+    const { plans } = await createBdrSequencePlans({
+      company: {
+        company_name: 'Kizik',
+        domain: 'kizik.com',
+        contacts: [{ first_name: 'Alex', title: 'VP of Customer Experience', email: 'alex@example.com' }],
+      },
+      contacts: [{ first_name: 'Alex', title: 'VP of Customer Experience', email: 'alex@example.com' }],
+      researchProvider,
+    });
+
+    const result = await researchBdrPlaceholders({
+      company: { company_name: 'Kizik', domain: 'kizik.com' },
+      plan: plans[0],
+      researchProvider,
+      useSynthesisAgent: true,
+    });
+
+    expect(result?.step1.insert?.selected_insert).toContain('Prague hands-free sneaker');
+    expect(result?.warnings.join(' ')).toMatch(/BDR synthesis agent failed.*provider unavailable/);
+  });
+
+  it('falls back to deterministic inserts when structured synthesis times out', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'test-key');
+    vi.stubEnv('BDR_RESEARCH_AGENT_TIMEOUT_MS', '1');
+    generateTextMock.mockImplementationOnce(() => new Promise(() => undefined));
+    const researchProvider = provider();
+    const { plans } = await createBdrSequencePlans({
+      company: {
+        company_name: 'Kizik',
+        domain: 'kizik.com',
+        contacts: [{ first_name: 'Alex', title: 'VP of Customer Experience', email: 'alex@example.com' }],
+      },
+      contacts: [{ first_name: 'Alex', title: 'VP of Customer Experience', email: 'alex@example.com' }],
+      researchProvider,
+    });
+
+    const result = await researchBdrPlaceholders({
+      company: { company_name: 'Kizik', domain: 'kizik.com' },
+      plan: plans[0],
+      researchProvider,
+      useSynthesisAgent: true,
+    });
+
+    expect(result?.step4.insert?.selected_insert).toContain('customers mention fit and sizing questions');
+    expect(result?.warnings.join(' ')).toMatch(/timed out/);
+  });
+
+  it('falls back to deterministic inserts when structured synthesis output is invalid', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'test-key');
+    generateTextMock.mockResolvedValueOnce({ output: { step1: null, step4: null, warnings: [] } });
+    const researchProvider = provider();
+    const { plans } = await createBdrSequencePlans({
+      company: {
+        company_name: 'Kizik',
+        domain: 'kizik.com',
+        contacts: [{ first_name: 'Alex', title: 'VP of Customer Experience', email: 'alex@example.com' }],
+      },
+      contacts: [{ first_name: 'Alex', title: 'VP of Customer Experience', email: 'alex@example.com' }],
+      researchProvider,
+    });
+
+    const result = await researchBdrPlaceholders({
+      company: { company_name: 'Kizik', domain: 'kizik.com' },
+      plan: plans[0],
+      researchProvider,
+      useSynthesisAgent: true,
+    });
+
+    expect(result?.step1.insert?.selected_insert).toContain('Prague hands-free sneaker');
+    expect(result?.warnings.join(' ')).toMatch(/BDR synthesis agent failed/);
+  });
+
+  it('uses Firecrawl extraction to enrich a promising official product result', async () => {
+    vi.stubEnv('EXA_API_KEY', 'exa-test');
+    vi.stubEnv('FIRECRAWL_API_KEY', 'fc-test');
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('api.exa.ai')) {
+        return new Response(JSON.stringify({
+          results: [{
+            url: 'https://kizik.com/products/prague',
+            title: 'Prague Hands-Free Sneaker',
+            text: 'Prague is a hands-free sneaker.',
+          }],
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (url.includes('api.firecrawl.dev')) {
+        return new Response(JSON.stringify({
+          success: true,
+          data: {
+            markdown: '# Prague Hands-Free Sneaker\nHands-free sneaker with wide sizing guidance, easy returns, and fit details for online shoppers.',
+            metadata: { title: 'Prague Hands-Free Sneaker', sourceURL: 'https://kizik.com/products/prague' },
+          },
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+
+    const result = await defaultBdrResearchProvider.heroProduct({ company_name: 'Kizik', domain: 'kizik.com' });
+
+    expect(fetchSpy).toHaveBeenCalledWith('https://api.firecrawl.dev/v2/scrape', expect.objectContaining({ method: 'POST' }));
+    expect(result.insert).toMatchObject({
+      selected_insert: expect.stringContaining("Kizik's Prague Hands-Free Sneaker"),
+      source_snippet: expect.stringContaining('wide sizing guidance'),
+      fallback_used: false,
+    });
   });
 });

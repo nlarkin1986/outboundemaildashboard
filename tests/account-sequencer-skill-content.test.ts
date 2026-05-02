@@ -29,6 +29,7 @@ describe('account sequencer skill source', () => {
   it('documents the two-question BDR intake branch and generic fallback', () => {
     const text = allSkillText();
 
+    expect(text).toContain('bdr-vercel-pipeline-2026-05-01');
     expect(text).toContain('Do you want to run a fully custom sequence or the BDR outreach sequence play?');
     expect(text).toContain('Do you have a CSV, or are you pasting in account names?');
     expect(text).toContain('play_id": "bdr_cold_outbound"');
@@ -85,7 +86,9 @@ describe('account sequencer skill source', () => {
     expect(packagedPolling.status).toBe(0);
     expect(packagedSkill.stdout).toBe(read('skills/account-sequencer/SKILL.md'));
     expect(packagedPolling.stdout).toBe(read('skills/account-sequencer/references/polling.md'));
+    expect(packagedSkill.stdout).toContain('bdr-vercel-pipeline-2026-05-01');
     expect(packagedSkill.stdout).toContain('"play_id": "bdr_cold_outbound"');
     expect(packagedPolling.stdout).toContain('max_poll_attempts');
+    expect(packagedPolling.stdout).toContain('diagnostics.deployment.contract_revision');
   });
 });

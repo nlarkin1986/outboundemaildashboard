@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createBatch, getBatchById, resetStore, upsertUserFromCoworkActor } from '@/lib/store';
-import { normalizeCoworkBatchPayload } from '@/app/api/webhooks/cowork/batch/route';
+import { normalizeCoworkBatchPayload, POST } from '@/app/api/webhooks/cowork/batch/route';
 
 describe('cowork identity and account ownership', () => {
   beforeEach(() => resetStore());
@@ -62,5 +62,31 @@ describe('cowork identity and account ownership', () => {
     expect(batch.requested_by).toBe('legacy@company.com');
     expect(batch.account_id).toBeTruthy();
     expect(batch.created_by_user_id).toBeTruthy();
+  });
+
+  it('infers webhook BDR play id from BDR metadata when play_id is omitted', async () => {
+    const previousSecret = process.env.COWORK_WEBHOOK_SECRET;
+    process.env.COWORK_WEBHOOK_SECRET = 'test-secret';
+    try {
+      const response = await POST(new Request('http://localhost/api/webhooks/cowork/batch', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-cowork-secret': 'test-secret' },
+        body: JSON.stringify({
+          payload: {
+            user: { email: 'bdr@company.com' },
+            play_metadata: { intake: { confirmed_play: 'bdr_cold_outbound' } },
+            companies: [{ company_name: 'KiwiCo', domain: 'kiwico.com' }],
+          },
+        }),
+      }));
+      const body = await response.json();
+
+      expect(response.status).toBe(201);
+      expect(body.play_id).toBe('bdr_cold_outbound');
+      expect(body.routing).toMatchObject({ selected_route: 'bdr_workflow', source: 'metadata' });
+    } finally {
+      if (previousSecret === undefined) delete process.env.COWORK_WEBHOOK_SECRET;
+      else process.env.COWORK_WEBHOOK_SECRET = previousSecret;
+    }
   });
 });

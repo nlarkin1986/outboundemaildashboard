@@ -42,6 +42,8 @@ export const emailStepSchema = z.object({
   step_number: z.number().int().positive(),
   original_step_number: z.number().int().positive().optional(),
   step_label: z.string().optional(),
+  original_subject: z.string().optional(),
+  original_body_html: z.string().optional(),
   subject: z.string().min(1),
   body_html: z.string().min(1),
   body_text: z.string().optional(),
